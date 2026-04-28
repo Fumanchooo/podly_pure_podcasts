@@ -391,6 +391,11 @@ def refresh_feed(feed: Feed) -> None:
             updates["image_url"] = new_image_url
 
     existing_posts = {post.guid: post for post in feed.posts}  # type: ignore[attr-defined]
+    existing_posts_by_url = {
+        post.download_url: post
+        for post in feed.posts  # type: ignore[attr-defined]
+        if post.download_url
+    }
     oldest_post = min(
         (post for post in feed.posts if post.release_date),  # type: ignore[attr-defined]
         key=lambda p: p.release_date,
@@ -422,6 +427,18 @@ def refresh_feed(feed: Feed) -> None:
     existing_post_updates = []
     for entry in feed_data.entries:
         existing_post = existing_posts.get(entry.id)
+        repaired_guid: str | None = None
+        if existing_post is None:
+            # GUID didn't match; try recovering by audio URL. This catches
+            # posts whose stored guid was synthesized from the enclosure URL
+            # by the legacy `get_guid` fallback. Without this lookup, the
+            # corrected upstream guid would orphan the existing row and the
+            # episode would re-appear to subscribers as new.
+            audio_url = find_audio_link(entry)
+            if audio_url:
+                existing_post = existing_posts_by_url.get(audio_url)
+                if existing_post is not None and existing_post.guid != entry.id:
+                    repaired_guid = entry.id
         if existing_post is None:
             logger.debug("found new podcast: %s", entry.title)
             p = make_post(feed, entry)
@@ -442,6 +459,9 @@ def refresh_feed(feed: Feed) -> None:
             continue
 
         post_update: dict[str, Any] = {"post_id": existing_post.id}
+
+        if repaired_guid is not None:
+            post_update["guid"] = repaired_guid
 
         updated_title = str(getattr(entry, "title", "") or "").strip()
         if updated_title and existing_post.title != updated_title:
@@ -998,14 +1018,21 @@ def _format_pub_date(release_date: datetime.datetime | None) -> str | None:
     return format_datetime(normalized.astimezone(datetime.UTC))
 
 
-# sometimes feed entry ids are the post url or something else
 def get_guid(entry: feedparser.FeedParserDict) -> str:
-    try:
-        uuid.UUID(entry.id)
-        return str(entry.id)
-    except ValueError:
-        dlurl = find_audio_link(entry)
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, dlurl))
+    """Return the post GUID, preferring the upstream `<guid>` verbatim.
+
+    Real feeds rarely use UUIDs as their `<guid>`; URLs and `tag:` URIs are
+    common. Hashing the enclosure URL as a substitute breaks subscriber
+    libraries whenever the CDN path or tracking params change, so we only
+    fall back to URL hashing when the upstream provides no usable id.
+    """
+    raw = getattr(entry, "id", None) or getattr(entry, "guid", None)
+    if isinstance(raw, str):
+        candidate = raw.strip()
+        if candidate:
+            return candidate
+    dlurl = find_audio_link(entry)
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, dlurl))
 
 
 def get_duration(entry: feedparser.FeedParserDict | dict[str, Any]) -> int | None:
