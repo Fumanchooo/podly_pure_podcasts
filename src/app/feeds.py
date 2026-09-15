@@ -427,7 +427,8 @@ def refresh_feed(feed: Feed) -> None:
     new_posts = []
     existing_post_updates = []
     for entry in feed_data.entries:
-        existing_post = existing_posts.get(entry.id)
+        entry_guid = get_guid(entry)
+        existing_post = existing_posts.get(entry_guid)
         repaired_guid: str | None = None
         if existing_post is None:
             # GUID didn't match; try recovering by audio URL. This catches
@@ -438,8 +439,8 @@ def refresh_feed(feed: Feed) -> None:
             audio_url = find_audio_link(entry)
             if audio_url:
                 existing_post = existing_posts_by_url.get(audio_url)
-                if existing_post is not None and existing_post.guid != entry.id:
-                    repaired_guid = entry.id
+                if existing_post is not None and existing_post.guid != entry_guid:
+                    repaired_guid = entry_guid
         if existing_post is None:
             logger.debug("found new podcast: %s", entry.title)
             p = make_post(feed, entry)
