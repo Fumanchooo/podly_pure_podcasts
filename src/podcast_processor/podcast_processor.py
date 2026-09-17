@@ -15,7 +15,7 @@ from app.extensions import db
 from app.models import Post, ProcessingJob, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_classifier import AdClassifier
-from podcast_processor.audio import clip_segments_exact
+from podcast_processor.audio import clip_segments_exact, copy_cover_art
 from podcast_processor.audio_processor import AudioProcessor
 from podcast_processor.chapter_ad_detector import (
     ChapterAdDetector,
@@ -799,8 +799,14 @@ class PodcastProcessor:
                 in_path=str(post.unprocessed_audio_path),
                 out_path=processed_audio_path,
             )
+            # ffmpeg re-encode drops ID3 tags including cover art; restore from source.
+            copy_cover_art(
+                in_path=str(post.unprocessed_audio_path),
+                out_path=processed_audio_path,
+            )
         else:
-            # No ads found, copy the original file
+            # No ads found, copy the original file. shutil.copyfile is a byte-for-byte
+            # copy so cover art and all metadata are preserved natively.
             shutil.copyfile(str(post.unprocessed_audio_path), processed_audio_path)
 
         # Write adjusted chapters to the processed file

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import ffmpeg
+import mutagen
+from mutagen.id3 import APIC, ID3, ID3NoHeaderError
 
 logger = logging.getLogger("global_logger")
 
@@ -300,3 +302,44 @@ def split_audio(
 
     logger.info("[FFMPEG_SPLIT] Split complete: created %d chunks", len(chunks))
     return chunks
+
+
+def copy_cover_art(in_path: str, out_path: str) -> None:
+    """
+    Copy ID3 APIC frames (cover artwork) from in_path to out_path.
+
+    ffmpeg re-encode with acodec=libmp3lame drops all ID3 tags including the
+    cover art. Call this right after clip_segments_with_fade or
+    clip_segments_exact writes the output.
+    """
+    try:
+        src = ID3(in_path)
+    except (ID3NoHeaderError, mutagen.MutagenError):
+        logger.info("[COVER_ART] No source ID3 tags in %s, skipping", in_path)
+        return
+
+    apic_frames = [f for f in src.values() if isinstance(f, APIC)]
+    if not apic_frames:
+        logger.debug("[COVER_ART] No APIC frames in %s, skipping", in_path)
+        return
+
+    try:
+        dst = ID3(out_path)
+    except ID3NoHeaderError:
+        dst = ID3()
+    except mutagen.MutagenError as e:
+        logger.warning("[COVER_ART] Failed to read existing tags on %s: %s", out_path, e)
+        return
+
+    for frame in apic_frames:
+        dst.add(frame)
+
+    try:
+        dst.save(out_path, v2_version=3)
+        logger.info(
+            "[COVER_ART] Embedded %d cover-art frame(s) on %s",
+            len(apic_frames),
+            out_path,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[COVER_ART] Failed to save tags on %s: %s", out_path, e)

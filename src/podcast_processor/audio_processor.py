@@ -5,7 +5,11 @@ from app.extensions import db
 from app.models import Identification, ModelCall, Post, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_merger import AdMerger
-from podcast_processor.audio import clip_segments_with_fade, get_audio_duration_ms
+from podcast_processor.audio import (
+    clip_segments_with_fade,
+    copy_cover_art,
+    get_audio_duration_ms,
+)
 from shared.config import Config
 
 
@@ -354,6 +358,9 @@ class AudioProcessor:
             out_path=output_path,
             use_vbr=True,
         )
+
+        # ffmpeg re-encode drops ID3 tags including cover art; restore from source.
+        copy_cover_art(in_path=post.unprocessed_audio_path, out_path=output_path)
 
         processed_duration_ms = get_audio_duration_ms(output_path)
         if processed_duration_ms is None:
