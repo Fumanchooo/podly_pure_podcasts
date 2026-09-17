@@ -7,7 +7,7 @@ from app.writer.client import writer_client
 from podcast_processor.ad_merger import AdMerger
 from podcast_processor.audio import (
     clip_segments_with_fade,
-    copy_cover_art,
+    copy_metadata,
     get_audio_duration_ms,
 )
 from shared.config import Config
@@ -359,8 +359,9 @@ class AudioProcessor:
             use_vbr=True,
         )
 
-        # ffmpeg re-encode drops ID3 tags including cover art; restore from source.
-        copy_cover_art(in_path=post.unprocessed_audio_path, out_path=output_path)
+        # ffmpeg re-encode drops ID3 tags (artist, title, cover art, ...);
+        # restore the full ID3 set from source. TSSE is rewritten to "Podly".
+        copy_metadata(in_path=post.unprocessed_audio_path, out_path=output_path)
 
         processed_duration_ms = get_audio_duration_ms(output_path)
         if processed_duration_ms is None:

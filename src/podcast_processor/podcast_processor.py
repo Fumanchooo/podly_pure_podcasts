@@ -15,7 +15,7 @@ from app.extensions import db
 from app.models import Post, ProcessingJob, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_classifier import AdClassifier
-from podcast_processor.audio import clip_segments_exact, copy_cover_art
+from podcast_processor.audio import clip_segments_exact, copy_metadata
 from podcast_processor.audio_processor import AudioProcessor
 from podcast_processor.chapter_ad_detector import (
     ChapterAdDetector,
@@ -799,8 +799,9 @@ class PodcastProcessor:
                 in_path=str(post.unprocessed_audio_path),
                 out_path=processed_audio_path,
             )
-            # ffmpeg re-encode drops ID3 tags including cover art; restore from source.
-            copy_cover_art(
+            # ffmpeg re-encode drops ID3 tags (artist, title, cover art, ...);
+            # restore the full ID3 set from source. TSSE is rewritten to "Podly".
+            copy_metadata(
                 in_path=str(post.unprocessed_audio_path),
                 out_path=processed_audio_path,
             )

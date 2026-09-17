@@ -7,7 +7,7 @@ from typing import Any
 
 import ffmpeg
 import mutagen
-from mutagen.id3 import APIC, ID3, ID3NoHeaderError
+from mutagen.id3 import ID3, TSSE, ID3NoHeaderError
 
 logger = logging.getLogger("global_logger")
 
@@ -304,23 +304,29 @@ def split_audio(
     return chunks
 
 
-def copy_cover_art(in_path: str, out_path: str) -> None:
+def copy_metadata(in_path: str, out_path: str) -> None:
     """
-    Copy ID3 APIC frames (cover artwork) from in_path to out_path.
+    Copy ID3 tags (artist, title, album, cover art, ...) from in_path to out_path.
 
-    ffmpeg re-encode with acodec=libmp3lame drops all ID3 tags including the
-    cover art. Call this right after clip_segments_with_fade or
-    clip_segments_exact writes the output.
+    ffmpeg re-encode with acodec=libmp3lame drops all ID3 tags; this restores
+    them so podcast apps display the episode metadata correctly. Call right
+    after clip_segments_with_fade or clip_segments_exact writes the output.
+
+    Frames intentionally dropped / rewritten:
+      - TLEN (length) -- the audio length changed after the cut.
+      - TSSE (encoder) -- replaced with "Podly" so players attribute the
+        re-encode to this pipeline, not to Lavf / iTunes / etc.
     """
+    # Frames where the source value is stale after re-encode.
+    _SKIP_FRAMES = frozenset({"TLEN", "TSSE"})
+
     try:
         src = ID3(in_path)
     except (ID3NoHeaderError, mutagen.MutagenError):
-        logger.info("[COVER_ART] No source ID3 tags in %s, skipping", in_path)
+        logger.info("[METADATA] No source ID3 tags in %s, skipping", in_path)
         return
 
-    apic_frames = [f for f in src.values() if isinstance(f, APIC)]
-    if not apic_frames:
-        logger.debug("[COVER_ART] No APIC frames in %s, skipping", in_path)
+    if not src:
         return
 
     try:
@@ -328,18 +334,27 @@ def copy_cover_art(in_path: str, out_path: str) -> None:
     except ID3NoHeaderError:
         dst = ID3()
     except mutagen.MutagenError as e:
-        logger.warning("[COVER_ART] Failed to read existing tags on %s: %s", out_path, e)
+        logger.warning("[METADATA] Failed to read existing tags on %s: %s", out_path, e)
         return
 
-    for frame in apic_frames:
+    copied: list[str] = []
+    for key, frame in src.items():
+        if key in _SKIP_FRAMES:
+            continue
         dst.add(frame)
+        copied.append(key)
+
+    # Provenance: this re-encode was done by Podly.
+    dst.delall("TSSE")
+    dst.add(TSSE(encoding=3, text=["Podly"]))
 
     try:
         dst.save(out_path, v2_version=3)
         logger.info(
-            "[COVER_ART] Embedded %d cover-art frame(s) on %s",
-            len(apic_frames),
+            "[METADATA] Restored %d ID3 frame(s) on %s (incl. APIC=%s)",
+            len(copied),
             out_path,
+            "APIC" in copied,
         )
     except Exception as e:  # noqa: BLE001
-        logger.warning("[COVER_ART] Failed to save tags on %s: %s", out_path, e)
+        logger.warning("[METADATA] Failed to save tags on %s: %s", out_path, e)
