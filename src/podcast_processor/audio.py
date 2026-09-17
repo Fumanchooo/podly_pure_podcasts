@@ -381,11 +381,14 @@ def fallback_for_post(
     )
 
 
-def _frame_text(frame: Any) -> list[str]:
+def _frame_text(frame: Any) -> list[Any]:
+    # Note: types are relaxed from list[str] because some frames (TDRC, TYER)
+    # yield mutagen's ID3TimeStamp objects which str-compare equal but are not
+    # str instances; beartype's runtime check would reject those.
     return list(getattr(frame, "text", []) or [])
 
 
-def _is_effectively_empty(text: list[str]) -> bool:
+def _is_effectively_empty(text: list[Any]) -> bool:
     return not text or all(not str(t).strip() for t in text)
 
 
