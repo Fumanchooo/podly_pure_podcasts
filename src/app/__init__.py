@@ -456,7 +456,8 @@ def _register_api_logging(app: Flask) -> None:
 
 
 def _run_app_startup(auth_settings: AuthSettings) -> None:
-    upgrade()
+    # This branch has two Alembic heads; "head" fails. Upgrade all heads.
+    upgrade(revision="heads")
     bootstrap_admin_user(auth_settings)
     try:
         ensure_defaults_and_hydrate()

@@ -2,18 +2,14 @@
 
 Aligned with podcast_processor.audio.clip_segments_with_fade:
 
-When the complex filter succeeds, each cut keeps fade_ms of audio from the
-start of the ad (fade-out) and fade_ms from the end of the ad (fade-in), so:
+Fades apply to kept *content* edges only. Ad audio is not faded back in, so:
 
-    output_ms ~ source_ms - sum(ad_duration_ms) + 2 * fade_ms * n_cuts
+    output_ms ~ source_ms - sum(ad_duration_ms)
 
-AudioProcessor uses DEFAULTS.OUTPUT_FADE_MS (3000) unless a feed overrides it.
-The simple-concat fallback has no fades: output_ms ~ source_ms - sum(ad).
-
-Existing tests/test_process_audio.py observe an extra ~56ms ffmpeg mux fudge;
-callers should treat the formula as the expected value with a small tolerance.
-Assumes ads are already merged, non-overlapping, sorted, and each ad is at
-least fade_ms long (the production filter does not guard shorter ads).
+(the previous formula added `2 * fade_ms * n_cuts` of ad audio and leaked
+preroll DAI). Simple-concat is the same duration. ffmpeg mux jitter of ~56ms
+is documented in `src/tests/test_process_audio.py` and is **not** included
+in the formula.
 """
 
 from __future__ import annotations
@@ -59,8 +55,11 @@ def expected_output_duration_ms(
             raise ValueError(f"ad segment end < start: {(start_ms, end_ms)}")
         removed += end_ms - start_ms
     n_cuts = len(ad_segments_ms)
-    fade_added = (2 * fade_ms * n_cuts) if complex_filter else 0
+    # fade_ms / complex_filter kept for API compatibility. Content-edge fades
+    # do not restore ad audio, so they do not add duration.
+    fade_added = 0
     expected = source_ms - removed + fade_added
+    _ = fade_ms
     return DurationAccount(
         source_ms=source_ms,
         removed_ms=removed,

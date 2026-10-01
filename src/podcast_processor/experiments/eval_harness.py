@@ -610,14 +610,14 @@ def render_results_markdown(results: dict[str, Any]) -> str:
             "",
             "## Removal verifier (fade formula)",
             "",
-            "When `clip_segments_with_fade`'s complex filter succeeds:",
+            "Fades apply to kept content edges only (not ad audio):",
             "",
-            "`output_ms ≈ source_ms − Σ ad_ms + 2 × fade_ms × n_cuts`",
+            "`output_ms ≈ source_ms − Σ ad_ms`",
             "",
             f"Feed default `fade_ms` is `{DEFAULTS.OUTPUT_FADE_MS}`. "
-            "Simple-concat fallback adds no fades. ffmpeg mux jitter of ~56ms "
-            "is documented in `src/tests/test_process_audio.py` and is **not** "
-            "included in the formula.",
+            "ffmpeg mux jitter of ~56ms is documented in "
+            "`src/tests/test_process_audio.py` and is **not** included in the "
+            "formula.",
             "",
             "## What a live Gemini run ($0.50/day, cache-first) should measure",
             "",

@@ -43,7 +43,6 @@ from podcast_processor.experiments.removal_verifier import (
     residual_cue_scan,
 )
 from podcast_processor.experiments.types import LabeledAd, ScoutSegment, ScoutWindow
-from shared import defaults as DEFAULTS
 from shared.env import GROQ_KEY_ENV
 
 MINI_FIXTURE = DATA_DIR / "mini_preroll.json"
@@ -328,7 +327,8 @@ def test_fade_formula_matches_audio_processor_complex_filter() -> None:
     account = expected_output_duration_ms(
         source, ads, fade_ms=fade, complex_filter=True
     )
-    assert account.expected_output_ms == source - 18_000 + 2 * fade
+    assert account.expected_output_ms == source - 18_000
+    assert account.fade_added_ms == 0
     simple = expected_output_duration_ms(
         source, ads, fade_ms=fade, complex_filter=False
     )
@@ -353,7 +353,7 @@ def test_evaluate_episode_offline_no_keys(monkeypatch) -> None:
     assert row["token_reduction_pct"] > 50.0
     assert row["scout_confirm"]["cached_repeat_input_tokens"] == 0
     assert row["removal"]["n_cuts"] == 1
-    assert row["removal"]["fade_added_ms"] == 2 * DEFAULTS.OUTPUT_FADE_MS
+    assert row["removal"]["fade_added_ms"] == 0
 
 
 def test_evaluate_all_writes_expected_shape(tmp_path: Path, monkeypatch) -> None:

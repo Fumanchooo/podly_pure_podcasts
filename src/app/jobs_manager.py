@@ -608,21 +608,24 @@ class JobsManager:
         any is marked as running.
         """
         try:
-            run_id = self._get_run_id()
-            result = writer_client.action("dequeue_job", {"run_id": run_id}, wait=True)
-
-            if result and result.success and result.data:
-                job_id = result.data["job_id"]
-                post_guid = result.data["post_guid"]
-
-                logger.info(
-                    "[JOB_DEQUEUE] Successfully dequeued and marked running: job_id=%s post_guid=%s",
-                    job_id,
-                    post_guid,
+            with _scheduler_app_context():
+                run_id = self._get_run_id()
+                result = writer_client.action(
+                    "dequeue_job", {"run_id": run_id}, wait=True
                 )
-                return job_id, post_guid
 
-            return None
+                if result and result.success and result.data:
+                    job_id = result.data["job_id"]
+                    post_guid = result.data["post_guid"]
+
+                    logger.info(
+                        "[JOB_DEQUEUE] Successfully dequeued and marked running: job_id=%s post_guid=%s",
+                        job_id,
+                        post_guid,
+                    )
+                    return job_id, post_guid
+
+                return None
         except Exception as e:  # noqa: BLE001
             logger.error(f"Error dequeuing job: {e}")
             return None
@@ -718,6 +721,27 @@ class JobsManager:
                         logger.info(
                             "Job %s finished with processor exception: %s", job_id, exc
                         )
+                        try:
+                            _db.session.expire_all()
+                            failed_job = _db.session.get(ProcessingJob, job_id)
+                            if failed_job and failed_job.status not in [
+                                "completed",
+                                "cancelled",
+                                "failed",
+                            ]:
+                                self._status_manager.update_job_status(
+                                    failed_job,
+                                    "failed",
+                                    failed_job.current_step or 0,
+                                    str(exc),
+                                    failed_job.progress_percentage or 0.0,
+                                )
+                        except Exception as cleanup_error:
+                            logger.error(
+                                "Failed to update job status after processor exception: %s",
+                                cleanup_error,
+                                exc_info=True,
+                            )
                     except Exception as exc:
                         logger.error(
                             "Unexpected error in job %s: %s", job_id, exc, exc_info=True

@@ -12,9 +12,14 @@ from jinja2 import Template
 from sqlalchemy.orm import object_session
 
 from app.extensions import db
-from app.models import Post, ProcessingJob, TranscriptSegment
+from app.model_call_utils import whisper_model_call_filter
+from app.models import ModelCall, Post, ProcessingJob, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_classifier import AdClassifier
+from podcast_processor.ad_detection_guard import (
+    ad_detection_confidence_failure,
+    collect_opening_ad_cues,
+)
 from podcast_processor.audio import clip_segments_exact
 from podcast_processor.audio_processor import AudioProcessor
 from podcast_processor.chapter_ad_detector import (
@@ -452,6 +457,7 @@ class PodcastProcessor:
         # Step 3: Classify ad segments
         self._classify_ad_segments(post, job, transcript_segments)
         self._raise_if_cancelled(job, 3, cancel_callback)
+        self._enforce_ad_detection_confidence(post, job, transcript_segments)
 
         # Step 4: Process audio (remove ad segments)
         self.status_manager.update_job_status(
@@ -933,6 +939,70 @@ class PodcastProcessor:
             user_prompt_template=user_prompt_template,
             post=post,
         )
+
+    def _enforce_ad_detection_confidence(
+        self,
+        post: Post,
+        job: ProcessingJob,
+        transcript_segments: list[TranscriptSegment],
+    ) -> None:
+        """Refuse to publish an uncut file when detection is not trustworthy.
+
+        If Whisper shows strong opening ad cues (or every classify call failed)
+        but 0 ad windows were labeled, mark the job failed and do not write a
+        'clean' processed file.
+        """
+        n_ad_segments = len(self.audio_processor.get_ad_segments(post))
+        classify_calls = self.db_session.query(ModelCall).filter(
+            ModelCall.post_id == post.id,
+            ~whisper_model_call_filter(),
+        )
+        n_failed = classify_calls.filter(ModelCall.status == "failed_permanent").count()
+        n_success = classify_calls.filter(ModelCall.status == "success").count()
+        opening_cues = collect_opening_ad_cues(transcript_segments)
+        message = ad_detection_confidence_failure(
+            n_ad_segments=n_ad_segments,
+            opening_cues=opening_cues,
+            n_failed_classify_calls=n_failed,
+            n_success_classify_calls=n_success,
+        )
+        if message is None:
+            if n_ad_segments == 0:
+                self.logger.info(
+                    "Ad-detection confidence guard: publishing 0-ad result for post %s "
+                    "(classify success=%s failed=%s, no opening cues)",
+                    post.id,
+                    n_success,
+                    n_failed,
+                )
+            return
+
+        self.logger.error(
+            "Ad-detection confidence guard failed for post %s: %s", post.id, message
+        )
+        self.status_manager.update_job_status(
+            job, "failed", 3, message, job.progress_percentage or 75.0
+        )
+        processed_path = post.processed_audio_path
+        if processed_path and os.path.isfile(processed_path):
+            try:
+                os.remove(processed_path)
+                self.logger.info("Removed untrusted processed file: %s", processed_path)
+            except OSError as exc:
+                self.logger.warning(
+                    "Failed to remove untrusted processed file '%s': %s",
+                    processed_path,
+                    exc,
+                )
+            result = writer_client.update(
+                "Post", post.id, {"processed_audio_path": None}, wait=True
+            )
+            if not result or not result.success:
+                self.logger.warning(
+                    "Failed to clear processed_audio_path after confidence failure: %s",
+                    getattr(result, "error", "unknown"),
+                )
+        raise ProcessorException(message)
 
     def _simulate_developer_processing(
         self,
