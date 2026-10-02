@@ -19,6 +19,7 @@ from jinja2 import Template
 
 from app.extensions import db
 from app.models import Feed, Post, TranscriptSegment
+from app.writer.client import writer_client
 from podcast_processor.ad_classifier import AdClassifier
 from podcast_processor.audio import clip_segments_with_fade, get_audio_duration_ms
 from podcast_processor.audio_processor import AudioProcessor
@@ -202,9 +203,22 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def force_local_writer() -> None:
+    """Never talk to Cake's live writer (127.0.0.1:50001)."""
+
+    def _submit(cmd: Any, wait: bool = False, timeout: int = 10) -> Any:
+        del timeout
+        result = writer_client._local_execute(cmd)
+        return result if wait else None
+
+    writer_client.submit = _submit  # type: ignore[method-assign]
+
+
 def make_flask(db_path: Path) -> Flask:
+    db_path = db_path.resolve()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     app = Flask("auto_gold_scorecard")
-    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + str(db_path)
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["TESTING"] = True
     db.init_app(app)
@@ -260,21 +274,43 @@ def judge_frozen_windows(
     max_usd: float,
 ) -> list[dict[str, Any]]:
     labels_path = output_dir / "labels.json"
+    existing_windows: list[dict[str, Any]] = []
     if labels_path.exists():
         existing = _read_json(labels_path)
-        windows = (
+        loaded = (
             existing.get("windows") if isinstance(existing, dict) else existing
         )
-        if isinstance(windows, list) and windows:
-            logger.info("reusing %s (%s windows)", labels_path, len(windows))
-            return windows
+        if isinstance(loaded, list):
+            existing_windows = loaded
+    have_audio = {
+        show_id
+        for show_id, row in downloads.items()
+        if row.get("audio_path")
+    }
+    skipped_with_audio = [
+        row
+        for row in existing_windows
+        if row.get("skipped") and row.get("show_id") in have_audio
+    ]
+    complete = existing_windows and not skipped_with_audio
+    if complete and len(existing_windows) >= sum(len(e.windows) for e in episodes):
+        logger.info("reusing %s (%s windows)", labels_path, len(existing_windows))
+        return existing_windows
+    prior: dict[tuple[str, float, float], dict[str, Any]] = {}
+    for row in existing_windows:
+        prior[(str(row["show_id"]), float(row["start"]), float(row["end"]))] = row
     whisper = ChunkWhisper(mode="local", model_name=DEFAULT_WHISPER_MODEL)
     judge = GoldJudge(mode="gemini", max_usd=max_usd)
     labeled: list[dict[str, Any]] = []
     for item in episodes:
         audio = downloads.get(item.show_id, {}).get("audio_path")
-        if not audio:
-            for window in item.windows:
+        for window in item.windows:
+            key = (item.show_id, float(window["start"]), float(window["end"]))
+            cached = prior.get(key)
+            if cached and not cached.get("skipped"):
+                labeled.append(cached)
+                continue
+            if not audio:
                 labeled.append(
                     {
                         "show_id": item.show_id,
@@ -286,16 +322,18 @@ def judge_frozen_windows(
                         "skip_reason": "no audio",
                     }
                 )
-            continue
-        src = Path(audio)
-        for window in item.windows:
+                continue
+            src = Path(audio)
             chunk = CandidateChunk(
                 start=float(window["start"]),
                 end=float(window["end"]),
                 sources=list(window.get("sources") or []),
             )
-            wav = output_dir / "chunks" / item.show_id / (
-                f"{chunk.start:.0f}-{chunk.end:.0f}.wav"
+            wav = (
+                output_dir
+                / "chunks"
+                / item.show_id
+                / f"{chunk.start:.0f}-{chunk.end:.0f}.wav"
             )
             if not wav.exists():
                 extract_chunk_wav(src, wav, chunk.start, chunk.end)
@@ -325,8 +363,13 @@ def judge_frozen_windows(
                 label.is_ad,
                 label.skipped,
             )
+    prior_spend = 0.0
+    if labels_path.exists():
+        existing_payload = _read_json(labels_path)
+        if isinstance(existing_payload, dict):
+            prior_spend = float(existing_payload.get("judge_spend_usd") or 0.0)
     payload = {
-        "judge_spend_usd": judge.spent_usd,
+        "judge_spend_usd": prior_spend + judge.spent_usd,
         "judge_calls": judge.n_calls,
         "n_is_ad": sum(1 for row in labeled if row.get("is_ad")),
         "windows": labeled,
@@ -467,6 +510,28 @@ def run_production_cut(
     return payload
 
 
+def load_production_cache(output_dir: Path) -> dict[str, dict[str, Any]]:
+    prod_dir = output_dir / "production"
+    cached: dict[str, dict[str, Any]] = {}
+    if not prod_dir.is_dir():
+        return cached
+    for path in sorted(prod_dir.glob("*.json")):
+        row = _read_json(path)
+        cached[str(row.get("show_id") or path.stem)] = row
+    return cached
+
+
+def seed_spend_from_production(
+    tracker: SpendTracker, production: dict[str, dict[str, Any]]
+) -> None:
+    if not production:
+        return
+    tracker.usd = max(
+        float(tracker.usd),
+        max(float(row.get("spend_usd_after") or 0.0) for row in production.values()),
+    )
+
+
 def build_scorecard(
     labeled: list[dict[str, Any]],
     production: dict[str, dict[str, Any]],
@@ -474,18 +539,24 @@ def build_scorecard(
     spend_usd: float,
     notes: list[str],
 ) -> ScorecardResult:
+    scored_ids = set(production)
     cuts = {
         show_id: [(float(a), float(b)) for a, b in row.get("cut_segments_s") or []]
         for show_id, row in production.items()
     }
     result = score_windows(
-        [row for row in labeled if not row.get("skipped")],
+        [
+            row
+            for row in labeled
+            if not row.get("skipped") and row.get("show_id") in scored_ids
+        ],
         cuts,
         preroll_end=PREROLL_END_SECONDS,
     )
     result.spend_usd = spend_usd
     result.spend_cap_usd = DEFAULT_JUDGE_BUDGET_USD
     result.n_shows_catalog = 12
+    result.n_shows_scored = len(production)
     result.notes = notes
     result.outliers = opening_fn_notes(result) + fp_notes(result)
     return result

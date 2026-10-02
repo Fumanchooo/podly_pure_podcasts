@@ -182,16 +182,31 @@ def fetch_rss(
     *,
     get: GetFn | None = None,
     timeout: int = DEFAULT_TIMEOUT,
+    retries: int = 3,
 ) -> tuple[bytes, Any]:
     session_get = get or requests.get
-    response = session_get(
-        show.rss_url,
-        timeout=timeout,
-        headers={"User-Agent": USER_AGENT},
-    )
-    response.raise_for_status()
-    content = response.content
-    return content, feedparser.parse(content)
+    last_exc: Exception | None = None
+    for attempt in range(max(1, retries)):
+        try:
+            response = session_get(
+                show.rss_url,
+                timeout=timeout,
+                headers={"User-Agent": USER_AGENT},
+            )
+            response.raise_for_status()
+            content = response.content
+            return content, feedparser.parse(content)
+        except (OSError, requests.RequestException) as exc:
+            last_exc = exc
+            logger.warning(
+                "RSS fetch attempt %s/%s failed for %s: %s",
+                attempt + 1,
+                retries,
+                show.show_id,
+                exc,
+            )
+    assert last_exc is not None
+    raise last_exc
 
 
 def episode_from_rss(
@@ -252,6 +267,7 @@ def download_audio(
     get: GetFn | None = None,
     timeout: int = 180,
     max_bytes: int | None = None,
+    retries: int = 3,
 ) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 0:
@@ -259,25 +275,35 @@ def download_audio(
     session_get = get or requests.get
     referer = "https://open.acast.com/" if "acast.com" in url else None
     headers = {"User-Agent": USER_AGENT, "Referer": referer}
-    try:
-        with session_get(
-            url, stream=True, timeout=timeout, headers=headers
-        ) as response:
-            response.raise_for_status()
-            written = 0
-            with dest.open("wb") as handle:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if not chunk:
-                        continue
-                    written += len(chunk)
-                    if max_bytes is not None and written > max_bytes:
-                        raise OSError(f"download exceeded max_bytes={max_bytes}")
-                    handle.write(chunk)
-    except (OSError, requests.RequestException):
-        if dest.exists():
+    last_exc: Exception | None = None
+    for attempt in range(max(1, retries)):
+        try:
+            with session_get(
+                url, stream=True, timeout=timeout, headers=headers
+            ) as response:
+                response.raise_for_status()
+                written = 0
+                with dest.open("wb") as handle:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if not chunk:
+                            continue
+                        written += len(chunk)
+                        if max_bytes is not None and written > max_bytes:
+                            raise OSError(f"download exceeded max_bytes={max_bytes}")
+                        handle.write(chunk)
+            return dest
+        except (OSError, requests.RequestException) as exc:
+            last_exc = exc
+            logger.warning(
+                "audio download attempt %s/%s failed for %s: %s",
+                attempt + 1,
+                retries,
+                dest.name,
+                exc,
+            )
             dest.unlink(missing_ok=True)
-        raise
-    return dest
+    assert last_exc is not None
+    raise last_exc
 
 
 def fetch_show_episode(

@@ -102,6 +102,9 @@ def test_seconds_recall_and_opening_fn() -> None:
     assert t.n_opening_caught == 1
     assert t.not_ad_seconds_cut == 15.0
     assert covered_seconds(0.0, 90.0, cuts["s1"]) == 80.0
+    empty = covered_seconds(0.0, 90.0, [])
+    assert empty == 0.0
+    assert isinstance(empty, float)
 
 
 def test_scorecard_markdown_leads_with_metrics_and_locked_claim() -> None:
@@ -118,7 +121,26 @@ def test_scorecard_markdown_leads_with_metrics_and_locked_claim() -> None:
     result.spend_usd = 0.0412
     md = render_scorecard_md(result)
     assert md.startswith("# Production remover vs auto-gold scorecard")
-    assert "| is_ad audio caught (seconds) |" in md
+    assert "| is_ad audio caught (candidate-window seconds) |" in md
     assert CLAIM_LOCKED in md
     assert "$0.0412" in md
     assert "`False`" in md
+
+
+def test_inner_ad_span_recall_does_not_require_full_90s_window() -> None:
+    rows = [
+        {
+            "show_id": "s1",
+            "start": 0.0,
+            "end": 90.0,
+            "is_ad": True,
+            "sources": ["preroll_always"],
+            "ad_spans": [{"start": 0.0, "end": 40.0}],
+        }
+    ]
+    result = score_windows(rows, {"s1": [(0.0, 40.0)]})
+    t = result.totals
+    assert t.n_opening_caught == 0
+    assert t.n_opening_span_caught == 1
+    assert t.opening_span_seconds_caught == 40.0
+    assert t.opening_span_seconds == 40.0

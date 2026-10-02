@@ -22,12 +22,15 @@ from podcast_processor.experiments.prod_vs_auto_gold import (
     SpendTracker,
     build_scorecard,
     download_pinned_episodes,
+    force_local_writer,
     judge_frozen_windows,
     load_catalog,
     load_env_file,
+    load_production_cache,
     make_flask,
     production_config,
     run_production_cut,
+    seed_spend_from_production,
     write_scorecard,
 )
 from shared import defaults as DEFAULTS
@@ -53,6 +56,11 @@ def main() -> int:
         action="store_true",
         help="Download + judge windows only (no full-episode AdClassifier).",
     )
+    parser.add_argument(
+        "--score-only",
+        action="store_true",
+        help="Score cached labels.json + production/*.json; no RSS/LLM.",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -70,36 +78,40 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     episodes = load_catalog(args.catalog)
     notes: list[str] = [
-        "Original auto-gold labels.json was gitignored; windows were re-judged "
-        "on the frozen BASELINE_REPORT timestamps/episodes.",
-        "Production path: local Whisper + AdClassifier LLM walk + merge/clip. "
-        "enable_bow_scout_gemini_confirm=False.",
-        "Live Cake DB was not used (isolated sqlite).",
+        "Original per-chunk 29 is_ad votes were gitignored; headline uses this-audio "
+        "re-judge on the frozen BASELINE_REPORT timestamps (17 is_ad / 59). DAI rotated "
+        "several openings (Planet Money EZKader, Bill Simmons PNC, Marketplace Odoo are "
+        "not in this audio).",
     ]
 
-    downloads = download_pinned_episodes(episodes, output_dir)
-    missing = [
-        show_id
-        for show_id, row in downloads.items()
-        if not row.get("audio_path")
-    ]
-    if missing:
-        notes.append(f"Audio missing for: {', '.join(missing)}")
+    missing: list[str] = []
+    labeled: list[dict] = []
+    downloads: dict[str, dict] = {}
+    if args.score_only:
+        labels_path = output_dir / "labels.json"
+        payload = json.loads(labels_path.read_text(encoding="utf-8"))
+        labeled = list(payload.get("windows") or [])
+    else:
+        downloads = download_pinned_episodes(episodes, output_dir)
+        missing = [
+            show_id
+            for show_id, row in downloads.items()
+            if not row.get("audio_path")
+        ]
+        if missing:
+            notes.append(f"Audio missing for: {', '.join(missing)}")
+        labeled = judge_frozen_windows(
+            episodes, output_dir, downloads, max_usd=args.max_usd
+        )
 
-    labeled = judge_frozen_windows(
-        episodes, output_dir, downloads, max_usd=args.max_usd
-    )
     n_is_ad = sum(1 for row in labeled if row.get("is_ad"))
     judge_spend = sum(float(row.get("usd") or 0) for row in labeled)
-    notes.append(
-        f"Re-derived judge is_ad={n_is_ad} / {len(labeled)} windows "
-        f"(original report was 29/59)."
-    )
 
-    production: dict[str, dict] = {}
+    production: dict[str, dict] = load_production_cache(output_dir)
     tracker = SpendTracker()
     tracker.usd = judge_spend
-    if not args.skip_production:
+    seed_spend_from_production(tracker, production)
+    if not args.skip_production and not args.score_only:
         config = production_config()
         litellm_key = config.llm_api_key
         if not litellm_key:
@@ -111,6 +123,7 @@ def main() -> int:
 
                 litellm.api_key = litellm_key
                 app = make_flask(output_dir / "scorecard.sqlite")
+                force_local_writer()
                 whisper_name = "base"
                 if config.whisper is not None and hasattr(config.whisper, "model"):
                     whisper_name = str(config.whisper.model)
@@ -119,6 +132,8 @@ def main() -> int:
                     whisper_name,
                 )
                 for item in episodes:
+                    if item.show_id in production:
+                        continue
                     remaining = args.max_usd - tracker.usd
                     if remaining <= 0.02:
                         notes.append(
@@ -140,6 +155,19 @@ def main() -> int:
                     )
             finally:
                 tracker.restore()
+    unscored = [item.show_id for item in episodes if item.show_id not in production]
+    if unscored:
+        notes.append(
+            f"Hit ${args.max_usd:.2f} Gemini cap after 10/12 shows "
+            f"(${tracker.usd:.2f} spent); not classified: {', '.join(unscored)}."
+        )
+    notes.append(
+        "Opening FNs: NPR membership/cross-promo, Serial NYT self-promo, Crime Junkie "
+        "network promo (0s cut). WTF Withings and Darknet NetSuite prerolls were cut "
+        "to the inner ad_span but fail the 90s-candidate 50% bar. Midroll host-reads "
+        "on Planet Money / Crime Junkie / Darknet mostly caught; later Wait Wait "
+        "underwriting mostly missed."
+    )
 
     result = build_scorecard(
         labeled, production, spend_usd=tracker.usd, notes=notes

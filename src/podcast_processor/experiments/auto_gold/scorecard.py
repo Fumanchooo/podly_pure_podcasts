@@ -24,7 +24,8 @@ def overlap_seconds(a0: float, a1: float, b0: float, b1: float) -> float:
 def covered_seconds(
     start: float, end: float, spans: list[tuple[float, float]]
 ) -> float:
-    return sum(overlap_seconds(start, end, s0, s1) for s0, s1 in spans)
+    # sum([]) is int 0; beartype requires float.
+    return float(sum(overlap_seconds(start, end, s0, s1) for s0, s1 in spans))
 
 
 def is_opening(start: float, end: float, preroll_end: float = PREROLL_END_SECONDS) -> bool:
@@ -40,6 +41,8 @@ class WindowScore:
     sources: list[str]
     covered: float
     opening: bool
+    span_seconds: float = 0.0
+    span_covered: float = 0.0
 
     def duration(self) -> float:
         return max(0.0, self.end - self.start)
@@ -48,8 +51,15 @@ class WindowScore:
         dur = self.duration()
         return 0.0 if dur <= 0 else min(1.0, self.covered / dur)
 
+    def span_coverage_frac(self) -> float:
+        dur = self.span_seconds
+        return 0.0 if dur <= 0 else min(1.0, self.span_covered / dur)
+
     def caught(self, min_frac: float = WINDOW_CAUGHT_FRACTION) -> bool:
         return self.is_ad and self.coverage_frac() >= min_frac
+
+    def span_caught(self, min_frac: float = WINDOW_CAUGHT_FRACTION) -> bool:
+        return self.is_ad and self.span_coverage_frac() >= min_frac
 
 
 @dataclass
@@ -72,6 +82,12 @@ class ScoreTotals:
     n_t0_windows: int = 0
     n_t0_caught: int = 0
     n_t0_missed: int = 0
+    is_ad_span_seconds: float = 0.0
+    is_ad_span_seconds_caught: float = 0.0
+    opening_span_seconds: float = 0.0
+    opening_span_seconds_caught: float = 0.0
+    n_opening_span_caught: int = 0
+    n_t0_span_caught: int = 0
 
     def window_recall(self) -> float:
         return _ratio(float(self.n_is_ad_caught), float(self.n_is_ad_windows))
@@ -87,6 +103,18 @@ class ScoreTotals:
 
     def t0_window_recall(self) -> float:
         return _ratio(float(self.n_t0_caught), float(self.n_t0_windows))
+
+    def span_seconds_recall(self) -> float:
+        return _ratio(self.is_ad_span_seconds_caught, self.is_ad_span_seconds)
+
+    def opening_span_seconds_recall(self) -> float:
+        return _ratio(self.opening_span_seconds_caught, self.opening_span_seconds)
+
+    def opening_span_window_recall(self) -> float:
+        return _ratio(float(self.n_opening_span_caught), float(self.n_opening_windows))
+
+    def t0_span_window_recall(self) -> float:
+        return _ratio(float(self.n_t0_span_caught), float(self.n_t0_windows))
 
     def missed_pct(self) -> float:
         return 100.0 * (1.0 - self.seconds_recall())
@@ -123,14 +151,31 @@ def score_windows(
         end = float(row["end"])
         is_ad = bool(row["is_ad"])
         cuts = cuts_by_show.get(show_id) or []
+        covered = covered_seconds(start, end, cuts)
+        raw_spans = list(row.get("ad_spans") or [])
+        if raw_spans:
+            span_seconds = float(
+                sum(max(0.0, float(sp["end"]) - float(sp["start"])) for sp in raw_spans)
+            )
+            span_covered = float(
+                sum(
+                    covered_seconds(float(sp["start"]), float(sp["end"]), cuts)
+                    for sp in raw_spans
+                )
+            )
+        else:
+            span_seconds = max(0.0, end - start)
+            span_covered = covered
         item = WindowScore(
             show_id=show_id,
             start=start,
             end=end,
             is_ad=is_ad,
             sources=list(row.get("sources") or []),
-            covered=covered_seconds(start, end, cuts),
+            covered=covered,
             opening=is_opening(start, end, preroll_end),
+            span_seconds=span_seconds,
+            span_covered=span_covered,
         )
         windows.append(item)
         bucket = per_show.setdefault(show_id, ScoreTotals())
@@ -155,6 +200,8 @@ def _accumulate(
         totals.is_ad_seconds += dur
         totals.is_ad_seconds_caught += item.covered
         totals.is_ad_seconds_missed += max(0.0, dur - item.covered)
+        totals.is_ad_span_seconds += item.span_seconds
+        totals.is_ad_span_seconds_caught += item.span_covered
         if item.caught(min_frac):
             totals.n_is_ad_caught += 1
         else:
@@ -164,16 +211,22 @@ def _accumulate(
             totals.opening_seconds += dur
             totals.opening_seconds_caught += item.covered
             totals.opening_seconds_missed += max(0.0, dur - item.covered)
+            totals.opening_span_seconds += item.span_seconds
+            totals.opening_span_seconds_caught += item.span_covered
             if item.caught(min_frac):
                 totals.n_opening_caught += 1
             else:
                 totals.n_opening_missed += 1
+            if item.span_caught(min_frac):
+                totals.n_opening_span_caught += 1
         if item.start <= 0.0:
             totals.n_t0_windows += 1
             if item.caught(min_frac):
                 totals.n_t0_caught += 1
             else:
                 totals.n_t0_missed += 1
+            if item.span_caught(min_frac):
+                totals.n_t0_span_caught += 1
         return
     totals.n_not_ad_windows += 1
     totals.not_ad_seconds += dur
@@ -193,13 +246,20 @@ def _ratio(num: float, den: float) -> float:
 def opening_fn_notes(result: ScorecardResult, min_frac: float = WINDOW_CAUGHT_FRACTION) -> list[str]:
     notes: list[str] = []
     for item in result.windows:
-        if not item.is_ad:
+        if not item.is_ad or not item.opening:
             continue
-        if item.opening and not item.caught(min_frac):
+        if not item.span_caught(min_frac):
             notes.append(
                 f"- FN opening `{item.show_id}` {item.start:.0f}-{item.end:.0f}s "
-                f"covered {item.covered:.1f}/{item.duration():.1f}s "
-                f"({pct(item.coverage_frac())})"
+                f"inner ad_span {item.span_covered:.1f}/{item.span_seconds:.1f}s "
+                f"({pct(item.span_coverage_frac())}); "
+                f"candidate window {item.covered:.1f}/{item.duration():.1f}s"
+            )
+        elif not item.caught(min_frac):
+            notes.append(
+                f"- Opening `{item.show_id}` inner ad_span caught "
+                f"({pct(item.span_coverage_frac())}) but 90s candidate window only "
+                f"{pct(item.coverage_frac())}"
             )
     return notes
 
@@ -230,22 +290,35 @@ def render_scorecard_md(result: ScorecardResult) -> str:
         "",
         "| metric | value |",
         "| --- | ---: |",
-        f"| is_ad audio caught (seconds) | {pct(t.seconds_recall())} "
+        f"| is_ad audio caught (candidate-window seconds) | {pct(t.seconds_recall())} "
         f"({t.is_ad_seconds_caught:.1f}s / {t.is_ad_seconds:.1f}s) |",
-        f"| is_ad audio missed (seconds) | {t.missed_pct():.1f}% "
+        f"| is_ad audio missed (candidate-window seconds) | {t.missed_pct():.1f}% "
         f"({t.is_ad_seconds_missed:.1f}s) |",
-        f"| is_ad windows caught (≥50% coverage) | {pct(t.window_recall())} "
+        f"| is_ad audio caught (judge inner ad_span seconds) | "
+        f"{pct(t.span_seconds_recall())} "
+        f"({t.is_ad_span_seconds_caught:.1f}s / {t.is_ad_span_seconds:.1f}s) |",
+        f"| is_ad windows caught (≥50% of candidate window) | {pct(t.window_recall())} "
         f"({t.n_is_ad_caught}/{t.n_is_ad_windows}) |",
         f"| is_ad windows missed | {t.n_is_ad_missed}/{t.n_is_ad_windows} |",
-        f"| opening/preroll audio caught (overlap t=0–{PREROLL_END_SECONDS:.0f}s) | "
+        f"| opening/preroll caught (candidate t=0–{PREROLL_END_SECONDS:.0f}s) | "
         f"{pct(t.opening_seconds_recall())} "
         f"({t.opening_seconds_caught:.1f}s / {t.opening_seconds:.1f}s) |",
-        f"| opening/preroll audio missed | {t.opening_missed_pct():.1f}% "
+        f"| opening/preroll missed (candidate window) | {t.opening_missed_pct():.1f}% "
         f"({t.opening_seconds_missed:.1f}s) |",
-        f"| opening/preroll windows caught | {pct(t.opening_window_recall())} "
+        f"| opening/preroll caught (judge inner ad_span seconds) | "
+        f"{pct(t.opening_span_seconds_recall())} "
+        f"({t.opening_span_seconds_caught:.1f}s / {t.opening_span_seconds:.1f}s) |",
+        f"| opening windows caught (≥50% of candidate) | "
+        f"{pct(t.opening_window_recall())} "
         f"({t.n_opening_caught}/{t.n_opening_windows}) |",
-        f"| t=0 windows caught | {pct(t.t0_window_recall())} "
+        f"| opening windows caught (≥50% of inner ad_span) | "
+        f"{pct(t.opening_span_window_recall())} "
+        f"({t.n_opening_span_caught}/{t.n_opening_windows}) |",
+        f"| t=0 windows caught (≥50% of candidate) | {pct(t.t0_window_recall())} "
         f"({t.n_t0_caught}/{t.n_t0_windows}) |",
+        f"| t=0 windows caught (≥50% of inner ad_span) | "
+        f"{pct(t.t0_span_window_recall())} "
+        f"({t.n_t0_span_caught}/{t.n_t0_windows}) |",
         f"| not_ad seconds also cut (FP-ish) | {t.not_ad_seconds_cut:.1f}s / "
         f"{t.not_ad_seconds:.1f}s |",
         f"| shows scored | {result.n_shows_scored}/{result.n_shows_catalog} |",
