@@ -1,6 +1,6 @@
 # Production remover vs auto-gold scorecard
 
-Production Podly `AdClassifier` (scout confirm **OFF**) scored against the frozen 12-episode auto-gold judge windows. Overlap scoring only; no second judge.
+Production Podly `AdClassifier` (scout confirm **OFF**) scored against this-audio re-judge windows on the frozen auto-gold timestamps. 10/12 episodes. Overlap scoring only; no second judge.
 
 ## Metrics
 
@@ -11,9 +11,9 @@ Production Podly `AdClassifier` (scout confirm **OFF**) scored against the froze
 | is_ad audio caught (judge inner ad_span seconds) | 57.7% (242.8s / 421.0s) |
 | is_ad windows caught (≥50% of candidate window) | 29.4% (5/17) |
 | is_ad windows missed | 12/17 |
-| opening/preroll caught (candidate t=0–90s) | 16.8% (97.7s / 582.0s) |
-| opening/preroll missed (candidate window) | 83.2% (484.3s) |
-| opening/preroll caught (judge inner ad_span seconds) | 41.2% (97.7s / 237.4s) |
+| opening/preroll caught (seconds overlapping t=0–90s) | 18.1% (97.7s / 540.0s) |
+| opening/preroll missed (t=0–90s) | 81.9% (442.3s) |
+| opening/preroll caught (inner ad_span ∩ t=0–90s) | 41.5% (97.7s / 235.4s) |
 | opening windows caught (≥50% of candidate) | 0.0% (0/6) |
 | opening windows caught (≥50% of inner ad_span) | 33.3% (2/6) |
 | t=0 windows caught (≥50% of candidate) | 0.0% (0/6) |
@@ -36,6 +36,6 @@ Production Podly `AdClassifier` (scout confirm **OFF**) scored against the froze
 - FN opening `crime_junkie` 0-92s inner ad_span 0.0/32.6s (0.0%); candidate window 0.0/92.0s
 - Opening `darknet_diaries` inner ad_span caught (90.5%) but 90s candidate window only 44.3%
 
-- Original per-chunk 29 is_ad votes were gitignored; headline uses this-audio re-judge on the frozen BASELINE_REPORT timestamps (17 is_ad / 59). DAI rotated several openings (Planet Money EZKader, Bill Simmons PNC, Marketplace Odoo are not in this audio).
-- Hit $0.50 Gemini cap after 10/12 shows ($0.49 spent); not classified: bill_simmons, marketplace.
+- Original per-chunk 29 is_ad votes were gitignored under `docs/experiments/auto_gold/runs/`. Headline uses this-audio re-judge on the frozen BASELINE_REPORT timestamps: 17 is_ad / 58 judged / 1 skipped (bbc_global_news 1751-1779s, no Whisper). DAI rotated openings vs that report: Planet Money EZKader→NPR membership (not is_ad here); Bill Simmons PNC→Ringer intro; Marketplace Odoo→show open; also Wait Wait Carvana→NPR Politics, Serial YouTube Premium→NYT app, Crime Junkie parenthood→Park Predators, BBC Whole Foods/Schwab→UK show open.
+- Hit $0.50 Gemini cap after 10/12 shows ($0.4924 spent). Audio exists for bill_simmons, marketplace but no production cuts; this-audio re-judge is_ad=0 on those 10 windows, so is_ad recall would not change.
 - Opening FNs: NPR membership/cross-promo, Serial NYT self-promo, Crime Junkie network promo (0s cut). WTF Withings and Darknet NetSuite prerolls were cut to the inner ad_span but fail the 90s-candidate 50% bar. Midroll host-reads on Planet Money / Crime Junkie / Darknet mostly caught; later Wait Wait underwriting mostly missed.

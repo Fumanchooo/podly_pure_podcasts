@@ -105,6 +105,30 @@ def test_seconds_recall_and_opening_fn() -> None:
     empty = covered_seconds(0.0, 90.0, [])
     assert empty == 0.0
     assert isinstance(empty, float)
+    overlapping = covered_seconds(0.0, 100.0, [(0.0, 50.0), (40.0, 70.0)])
+    assert overlapping == 70.0
+
+
+def test_opening_seconds_clip_to_preroll() -> None:
+    rows = [
+        {
+            "show_id": "s1",
+            "start": 0.0,
+            "end": 122.0,
+            "is_ad": True,
+            "sources": ["preroll_always"],
+            "ad_spans": [{"start": 0.0, "end": 59.7}],
+        }
+    ]
+    result = score_windows(rows, {"s1": [(0.0, 54.0)]})
+    t = result.totals
+    assert t.opening_seconds == 90.0
+    assert t.opening_seconds_caught == 54.0
+    assert t.opening_span_seconds == 59.7
+    assert t.opening_span_seconds_caught == 54.0
+    assert t.n_opening_caught == 0
+    assert t.n_opening_span_caught == 1
+    assert t.is_ad_seconds == 122.0
 
 
 def test_scorecard_markdown_leads_with_metrics_and_locked_claim() -> None:

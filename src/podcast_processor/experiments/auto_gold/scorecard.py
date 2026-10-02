@@ -21,11 +21,31 @@ def overlap_seconds(a0: float, a1: float, b0: float, b1: float) -> float:
     return max(0.0, min(float(a1), float(b1)) - max(float(a0), float(b0)))
 
 
+def merge_spans(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if not spans:
+        return []
+    ordered = sorted((float(a), float(b)) for a, b in spans if float(b) > float(a))
+    if not ordered:
+        return []
+    merged: list[list[float]] = [[ordered[0][0], ordered[0][1]]]
+    for start, end in ordered[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(a, b) for a, b in merged]
+
+
 def covered_seconds(
     start: float, end: float, spans: list[tuple[float, float]]
 ) -> float:
     # sum([]) is int 0; beartype requires float.
-    return float(sum(overlap_seconds(start, end, s0, s1) for s0, s1 in spans))
+    return float(
+        sum(
+            overlap_seconds(start, end, s0, s1)
+            for s0, s1 in merge_spans(spans)
+        )
+    )
 
 
 def is_opening(start: float, end: float, preroll_end: float = PREROLL_END_SECONDS) -> bool:
@@ -43,6 +63,10 @@ class WindowScore:
     opening: bool
     span_seconds: float = 0.0
     span_covered: float = 0.0
+    opening_seconds: float = 0.0
+    opening_covered: float = 0.0
+    opening_span_seconds: float = 0.0
+    opening_span_covered: float = 0.0
 
     def duration(self) -> float:
         return max(0.0, self.end - self.start)
@@ -150,22 +174,39 @@ def score_windows(
         start = float(row["start"])
         end = float(row["end"])
         is_ad = bool(row["is_ad"])
-        cuts = cuts_by_show.get(show_id) or []
+        cuts = merge_spans(cuts_by_show.get(show_id) or [])
         covered = covered_seconds(start, end, cuts)
+        opening = is_opening(start, end, preroll_end)
+        opening_lo = max(start, 0.0)
+        opening_hi = min(end, preroll_end)
+        opening_seconds = overlap_seconds(start, end, 0.0, preroll_end)
+        opening_covered = (
+            covered_seconds(opening_lo, opening_hi, cuts) if opening_seconds > 0 else 0.0
+        )
         raw_spans = list(row.get("ad_spans") or [])
         if raw_spans:
-            span_seconds = float(
-                sum(max(0.0, float(sp["end"]) - float(sp["start"])) for sp in raw_spans)
+            span_pairs = merge_spans(
+                [(float(sp["start"]), float(sp["end"])) for sp in raw_spans]
             )
+            span_seconds = float(sum(max(0.0, b - a) for a, b in span_pairs))
             span_covered = float(
+                sum(covered_seconds(a, b, cuts) for a, b in span_pairs)
+            )
+            opening_span_seconds = float(
+                sum(overlap_seconds(a, b, 0.0, preroll_end) for a, b in span_pairs)
+            )
+            opening_span_covered = float(
                 sum(
-                    covered_seconds(float(sp["start"]), float(sp["end"]), cuts)
-                    for sp in raw_spans
+                    covered_seconds(max(a, 0.0), min(b, preroll_end), cuts)
+                    for a, b in span_pairs
+                    if overlap_seconds(a, b, 0.0, preroll_end) > 0
                 )
             )
         else:
             span_seconds = max(0.0, end - start)
             span_covered = covered
+            opening_span_seconds = opening_seconds
+            opening_span_covered = opening_covered
         item = WindowScore(
             show_id=show_id,
             start=start,
@@ -173,9 +214,13 @@ def score_windows(
             is_ad=is_ad,
             sources=list(row.get("sources") or []),
             covered=covered,
-            opening=is_opening(start, end, preroll_end),
+            opening=opening,
             span_seconds=span_seconds,
             span_covered=span_covered,
+            opening_seconds=opening_seconds,
+            opening_covered=opening_covered,
+            opening_span_seconds=opening_span_seconds,
+            opening_span_covered=opening_span_covered,
         )
         windows.append(item)
         bucket = per_show.setdefault(show_id, ScoreTotals())
@@ -208,11 +253,13 @@ def _accumulate(
             totals.n_is_ad_missed += 1
         if item.opening:
             totals.n_opening_windows += 1
-            totals.opening_seconds += dur
-            totals.opening_seconds_caught += item.covered
-            totals.opening_seconds_missed += max(0.0, dur - item.covered)
-            totals.opening_span_seconds += item.span_seconds
-            totals.opening_span_seconds_caught += item.span_covered
+            totals.opening_seconds += item.opening_seconds
+            totals.opening_seconds_caught += item.opening_covered
+            totals.opening_seconds_missed += max(
+                0.0, item.opening_seconds - item.opening_covered
+            )
+            totals.opening_span_seconds += item.opening_span_seconds
+            totals.opening_span_seconds_caught += item.opening_span_covered
             if item.caught(min_frac):
                 totals.n_opening_caught += 1
             else:
@@ -283,8 +330,9 @@ def render_scorecard_md(result: ScorecardResult) -> str:
         "# Production remover vs auto-gold scorecard",
         "",
         "Production Podly `AdClassifier` (scout confirm **OFF**) scored against "
-        "the frozen 12-episode auto-gold judge windows. Overlap scoring only; "
-        "no second judge.",
+        "this-audio re-judge windows on the frozen auto-gold timestamps. "
+        f"{result.n_shows_scored}/{result.n_shows_catalog} episodes. "
+        "Overlap scoring only; no second judge.",
         "",
         "## Metrics",
         "",
@@ -300,12 +348,13 @@ def render_scorecard_md(result: ScorecardResult) -> str:
         f"| is_ad windows caught (≥50% of candidate window) | {pct(t.window_recall())} "
         f"({t.n_is_ad_caught}/{t.n_is_ad_windows}) |",
         f"| is_ad windows missed | {t.n_is_ad_missed}/{t.n_is_ad_windows} |",
-        f"| opening/preroll caught (candidate t=0–{PREROLL_END_SECONDS:.0f}s) | "
+        f"| opening/preroll caught (seconds overlapping t=0–{PREROLL_END_SECONDS:.0f}s) | "
         f"{pct(t.opening_seconds_recall())} "
         f"({t.opening_seconds_caught:.1f}s / {t.opening_seconds:.1f}s) |",
-        f"| opening/preroll missed (candidate window) | {t.opening_missed_pct():.1f}% "
+        f"| opening/preroll missed (t=0–{PREROLL_END_SECONDS:.0f}s) | "
+        f"{t.opening_missed_pct():.1f}% "
         f"({t.opening_seconds_missed:.1f}s) |",
-        f"| opening/preroll caught (judge inner ad_span seconds) | "
+        f"| opening/preroll caught (inner ad_span ∩ t=0–{PREROLL_END_SECONDS:.0f}s) | "
         f"{pct(t.opening_span_seconds_recall())} "
         f"({t.opening_span_seconds_caught:.1f}s / {t.opening_span_seconds:.1f}s) |",
         f"| opening windows caught (≥50% of candidate) | "

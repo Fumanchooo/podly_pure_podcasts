@@ -78,10 +78,14 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     episodes = load_catalog(args.catalog)
     notes: list[str] = [
-        "Original per-chunk 29 is_ad votes were gitignored; headline uses this-audio "
-        "re-judge on the frozen BASELINE_REPORT timestamps (17 is_ad / 59). DAI rotated "
-        "several openings (Planet Money EZKader, Bill Simmons PNC, Marketplace Odoo are "
-        "not in this audio).",
+        "Original per-chunk 29 is_ad votes were gitignored under "
+        "`docs/experiments/auto_gold/runs/`. Headline uses this-audio re-judge on "
+        "the frozen BASELINE_REPORT timestamps: 17 is_ad / 58 judged / 1 skipped "
+        "(bbc_global_news 1751-1779s, no Whisper). DAI rotated openings vs that "
+        "report: Planet Money EZKader→NPR membership (not is_ad here); Bill Simmons "
+        "PNC→Ringer intro; Marketplace Odoo→show open; also Wait Wait Carvana→NPR "
+        "Politics, Serial YouTube Premium→NYT app, Crime Junkie parenthood→Park "
+        "Predators, BBC Whole Foods/Schwab→UK show open.",
     ]
 
     missing: list[str] = []
@@ -159,7 +163,9 @@ def main() -> int:
     if unscored:
         notes.append(
             f"Hit ${args.max_usd:.2f} Gemini cap after 10/12 shows "
-            f"(${tracker.usd:.2f} spent); not classified: {', '.join(unscored)}."
+            f"(${tracker.usd:.4f} spent). Audio exists for {', '.join(unscored)} "
+            "but no production cuts; this-audio re-judge is_ad=0 on those 10 windows, "
+            "so is_ad recall would not change."
         )
     notes.append(
         "Opening FNs: NPR membership/cross-promo, Serial NYT self-promo, Crime Junkie "
@@ -176,16 +182,32 @@ def main() -> int:
     docs_scorecard = Path("docs/experiments/auto_gold/SCORECARD.md")
     write_scorecard(result, output_dir / "SCORECARD.md")
     write_scorecard(result, docs_scorecard)
+    t = result.totals
     (output_dir / "score.json").write_text(
         json.dumps(
             {
-                "n_is_ad": n_is_ad,
+                "n_is_ad_labels": n_is_ad,
+                "n_is_ad_windows_scored": t.n_is_ad_windows,
                 "judge_spend_usd": judge_spend,
                 "total_spend_usd": tracker.usd,
                 "n_production": len(production),
                 "missing_audio": missing,
-                "seconds_recall": result.totals.seconds_recall(),
-                "opening_seconds_recall": result.totals.opening_seconds_recall(),
+                "seconds_recall": t.seconds_recall(),
+                "seconds_caught": t.is_ad_seconds_caught,
+                "seconds_total": t.is_ad_seconds,
+                "span_seconds_recall": t.span_seconds_recall(),
+                "opening_seconds_recall": t.opening_seconds_recall(),
+                "opening_seconds_caught": t.opening_seconds_caught,
+                "opening_seconds_total": t.opening_seconds,
+                "opening_span_seconds_recall": t.opening_span_seconds_recall(),
+                "window_recall": t.window_recall(),
+                "n_is_ad_caught": t.n_is_ad_caught,
+                "opening_window_recall": t.opening_window_recall(),
+                "opening_span_window_recall": t.opening_span_window_recall(),
+                "t0_window_recall": t.t0_window_recall(),
+                "t0_span_window_recall": t.t0_span_window_recall(),
+                "not_ad_seconds_cut": t.not_ad_seconds_cut,
+                "not_ad_seconds": t.not_ad_seconds,
             },
             indent=2,
         )
