@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Score production Podly ad-remover vs frozen auto-gold is_ad windows.
+
+Does not set enable_bow_scout_gemini_confirm. Isolated sqlite. No PR.
+
+  PYTHONPATH=src uv run python scripts/experiments/score_prod_vs_auto_gold.py
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+from podcast_processor.experiments.auto_gold.constants import DEFAULT_JUDGE_BUDGET_USD
+from podcast_processor.experiments.prod_vs_auto_gold import (
+    CAKE_ENV_LOCAL,
+    CachedLocalWhisper,
+    SpendTracker,
+    build_scorecard,
+    download_pinned_episodes,
+    judge_frozen_windows,
+    load_catalog,
+    load_env_file,
+    make_flask,
+    production_config,
+    run_production_cut,
+    write_scorecard,
+)
+from shared import defaults as DEFAULTS
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("docs/experiments/auto_gold/runs/prod-scorecard"),
+    )
+    parser.add_argument("--catalog", type=Path, default=None)
+    parser.add_argument("--env-file", type=Path, default=CAKE_ENV_LOCAL)
+    parser.add_argument(
+        "--max-usd",
+        type=float,
+        default=DEFAULT_JUDGE_BUDGET_USD,
+        help="Cap combined Gemini spend (judge + production classify).",
+    )
+    parser.add_argument(
+        "--skip-production",
+        action="store_true",
+        help="Download + judge windows only (no full-episode AdClassifier).",
+    )
+    args = parser.parse_args()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    os.chdir(repo_root)
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    os.environ["PODLY_WRITER_LOCAL_FALLBACK"] = "1"
+    load_env_file(args.env_file)
+
+    if DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM:
+        print("enable_bow_scout_gemini_confirm is true; refusing.", file=sys.stderr)
+        return 2
+
+    output_dir = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    episodes = load_catalog(args.catalog)
+    notes: list[str] = [
+        "Original auto-gold labels.json was gitignored; windows were re-judged "
+        "on the frozen BASELINE_REPORT timestamps/episodes.",
+        "Production path: local Whisper + AdClassifier LLM walk + merge/clip. "
+        "enable_bow_scout_gemini_confirm=False.",
+        "Live Cake DB was not used (isolated sqlite).",
+    ]
+
+    downloads = download_pinned_episodes(episodes, output_dir)
+    missing = [
+        show_id
+        for show_id, row in downloads.items()
+        if not row.get("audio_path")
+    ]
+    if missing:
+        notes.append(f"Audio missing for: {', '.join(missing)}")
+
+    labeled = judge_frozen_windows(
+        episodes, output_dir, downloads, max_usd=args.max_usd
+    )
+    n_is_ad = sum(1 for row in labeled if row.get("is_ad"))
+    judge_spend = sum(float(row.get("usd") or 0) for row in labeled)
+    notes.append(
+        f"Re-derived judge is_ad={n_is_ad} / {len(labeled)} windows "
+        f"(original report was 29/59)."
+    )
+
+    production: dict[str, dict] = {}
+    tracker = SpendTracker()
+    tracker.usd = judge_spend
+    if not args.skip_production:
+        config = production_config()
+        litellm_key = config.llm_api_key
+        if not litellm_key:
+            notes.append("No LLM_API_KEY/Gemini key; production classify skipped.")
+        else:
+            tracker.install()
+            try:
+                import litellm
+
+                litellm.api_key = litellm_key
+                app = make_flask(output_dir / "scorecard.sqlite")
+                whisper_name = "base"
+                if config.whisper is not None and hasattr(config.whisper, "model"):
+                    whisper_name = str(config.whisper.model)
+                transcriber = CachedLocalWhisper(
+                    logging.getLogger("scorecard_whisper"),
+                    whisper_name,
+                )
+                for item in episodes:
+                    remaining = args.max_usd - tracker.usd
+                    if remaining <= 0.02:
+                        notes.append(
+                            f"Hit ${args.max_usd:.2f} Gemini cap before {item.show_id}."
+                        )
+                        break
+                    audio = downloads.get(item.show_id, {}).get("audio_path")
+                    if not audio:
+                        continue
+                    production[item.show_id] = run_production_cut(
+                        show_id=item.show_id,
+                        title=item.episode_title,
+                        audio_path=Path(audio),
+                        output_dir=output_dir,
+                        config=config,
+                        app=app,
+                        transcriber=transcriber,
+                        tracker=tracker,
+                    )
+            finally:
+                tracker.restore()
+
+    result = build_scorecard(
+        labeled, production, spend_usd=tracker.usd, notes=notes
+    )
+    result.n_shows_scored = len(production) or result.n_shows_scored
+    docs_scorecard = Path("docs/experiments/auto_gold/SCORECARD.md")
+    write_scorecard(result, output_dir / "SCORECARD.md")
+    write_scorecard(result, docs_scorecard)
+    (output_dir / "score.json").write_text(
+        json.dumps(
+            {
+                "n_is_ad": n_is_ad,
+                "judge_spend_usd": judge_spend,
+                "total_spend_usd": tracker.usd,
+                "n_production": len(production),
+                "missing_audio": missing,
+                "seconds_recall": result.totals.seconds_recall(),
+                "opening_seconds_recall": result.totals.opening_seconds_recall(),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print(docs_scorecard.read_text(encoding="utf-8"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

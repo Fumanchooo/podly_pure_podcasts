@@ -119,6 +119,28 @@ def entry_is_trailer(entry: Any) -> bool:
     return episode_type in TRAILER_TYPES
 
 
+_TITLE_QUOTES = str.maketrans(
+    {
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "«": '"',
+        "»": '"',
+        "‘": "'",
+        "’": "'",
+        "‚": "'",
+        "—": "-",
+        "–": "-",
+        "−": "-",
+    }
+)
+
+
+def normalize_episode_title(title: str) -> str:
+    cleaned = str(title or "").translate(_TITLE_QUOTES)
+    return " ".join(cleaned.casefold().split())
+
+
 def pick_latest_audio_entry(parsed: Any) -> Any | None:
     """Most recent real episode: skip trailers and sub-5-minute feed notes."""
     entries = list(getattr(parsed, "entries", None) or [])
@@ -136,6 +158,23 @@ def pick_latest_audio_entry(parsed: Any) -> Any | None:
             continue
         return entry
     return fallback
+
+
+def pick_audio_entry_by_title(parsed: Any, wanted_title: str) -> Any | None:
+    """Pin to a frozen episode title so later RSS drops do not change gold."""
+    wanted = normalize_episode_title(wanted_title)
+    if not wanted:
+        return None
+    for entry in list(getattr(parsed, "entries", None) or []):
+        if entry_is_trailer(entry):
+            continue
+        audio = find_audio_link(entry)
+        if not (audio and str(audio).startswith("http")):
+            continue
+        title = normalize_episode_title(str(getattr(entry, "title", "") or ""))
+        if title == wanted or wanted in title or title in wanted:
+            return entry
+    return None
 
 
 def fetch_rss(
@@ -159,19 +198,29 @@ def episode_from_rss(
     show: ShowSpec,
     xml_bytes: bytes,
     parsed: Any,
+    wanted_title: str | None = None,
 ) -> EpisodeRef:
-    entry = pick_latest_audio_entry(parsed)
+    if wanted_title:
+        entry = pick_audio_entry_by_title(parsed, wanted_title)
+        missing = (
+            f"pinned episode not in RSS: {wanted_title}"
+            if entry is None
+            else None
+        )
+    else:
+        entry = pick_latest_audio_entry(parsed)
+        missing = "no audio episode in RSS" if entry is None else None
     if entry is None:
         return EpisodeRef(
             show=show,
-            episode_title="",
+            episode_title=wanted_title or "",
             audio_url=None,
             duration_seconds=None,
             guid="",
             published=None,
             dai_likely=False,
             rss_ok=False,
-            error="no audio episode in RSS",
+            error=missing,
         )
     audio_url = find_audio_link(entry)
     published = getattr(entry, "published", None) or getattr(entry, "updated", None)
@@ -238,6 +287,7 @@ def fetch_show_episode(
     download: bool = False,
     get: GetFn | None = None,
     max_bytes: int | None = None,
+    wanted_title: str | None = None,
 ) -> tuple[EpisodeRef, Path | None]:
     try:
         xml_bytes, parsed = fetch_rss(show, get=get)
@@ -255,7 +305,9 @@ def fetch_show_episode(
             error=f"rss fetch failed: {exc}",
         )
         return episode, None
-    episode = episode_from_rss(show, xml_bytes, parsed)
+    episode = episode_from_rss(
+        show, xml_bytes, parsed, wanted_title=wanted_title
+    )
     rss_dir = output_dir / "rss"
     rss_dir.mkdir(parents=True, exist_ok=True)
     rss_path = rss_dir / f"{show.show_id}.xml"
