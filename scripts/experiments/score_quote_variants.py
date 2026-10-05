@@ -252,8 +252,22 @@ def main() -> int:
         cache=RUN / "llm_cache_v2",
         baseline=baseline_cuts,
     )
+    rows["lexical_v2"] = _run_variant(
+        name="lexical-v2",
+        prompt_version="v2",
+        cut_mode="lexical",
+        pad=0.0,
+        cache=RUN / "llm_cache_v2",
+        baseline=baseline_cuts,
+    )
 
-    order = ["baseline", "pure_quote", "prompt_v2", "hybrid", "hybrid_v2"]
+    order = [
+        "baseline",
+        "pure_quote",
+        "prompt_v2",
+        "hybrid_v2",
+        "lexical_v2",
+    ]
     headers = ["metric", *order]
     metrics = [
         ("inner-span catch", lambda r: _fmt_pct(r["inner"])),
@@ -289,6 +303,37 @@ def main() -> int:
     )
     for key in order:
         lines.append(f"{key} gates: {json.dumps(rows[key]['gates'])}")
+
+    from podcast_processor.quote_lexicon import TUNE_NOTES
+
+    lines.append("")
+    lines.append("Tune notes (rule → motivating show; not used as show IDs in the matcher):")
+    for note in TUNE_NOTES:
+        lines.append(f"- {note.rule}: {note.motivated_by} [{note.class_hint}]")
+
+    lex_cuts = _cuts_from_prod(RUN / "lexical-v2" / "production")
+    labels = load_json(LABELS)
+    label_rows = [
+        row
+        for row in labels.get("windows") or []
+        if not row.get("skipped") and row.get("show_id") in lex_cuts
+    ]
+    lines.append("")
+    lines.append("Leave-one-show-out (lexical_v2):")
+    for leave in sorted(lex_cuts):
+        sub = {k: v for k, v in lex_cuts.items() if k != leave}
+        result = score_windows(
+            [row for row in label_rows if row.get("show_id") != leave],
+            sub,
+        )
+        tot = result.totals
+        opening = f"{tot.n_opening_span_caught}/{tot.n_opening_windows}"
+        edge = tot.overcut_seconds + tot.undercut_seconds
+        lines.append(
+            f"- leave {leave}: inner={tot.span_seconds_recall():.1%} "
+            f"edge={edge:.2f}s not_ad={tot.not_ad_seconds_cut:.2f}s open={opening}"
+        )
+
     text = "\n".join(lines) + "\n"
     (RUN / "VARIANT_COMPARISON.md").write_text(text, encoding="utf-8")
     (RUN / "VARIANT_COMPARISON.json").write_text(

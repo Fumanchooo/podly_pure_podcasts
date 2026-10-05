@@ -434,6 +434,22 @@ def quote_cuts_for_show(
             baseline=baseline_cuts,
             pad_seconds=pad_seconds,
         )
+    elif cut_mode in {"lexical", "lexical_asym"}:
+        from podcast_processor.quote_lexicon import lexical_cuts_from_matches
+
+        cuts = lexical_cuts_from_matches(
+            matches,
+            words,
+            gaps,
+            asymmetric_end=cut_mode == "lexical_asym",
+        )
+        if audio_path is not None and audio_path.is_file():
+            from podcast_processor.boundary_snap import SilenceGap
+
+            typed_gaps = [SilenceGap(start=a, end=b) for a, b in gaps]
+            cuts = refine_cuts(
+                cuts, audio_path=audio_path, gaps=typed_gaps, radius=2.0
+            )
     else:
         cuts = cuts_from_matches(matches)
         if audio_path is not None and audio_path.is_file():
