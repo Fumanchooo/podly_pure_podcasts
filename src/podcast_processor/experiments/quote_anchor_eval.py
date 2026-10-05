@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -279,17 +280,39 @@ def complete_json(
         raise BudgetExceeded(
             f"Gemini UTC-day cap would be exceeded (remaining ${budget.remaining:.4f})"
         )
-    response = litellm.completion(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user},
-        ],
-        timeout=300,
-        response_format={"type": "json_object"},
-        max_tokens=512,
-        reasoning_effort="low",
-    )
+    last_error: Exception | None = None
+    response = None
+    for attempt in range(6):
+        try:
+            response = litellm.completion(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user},
+                ],
+                timeout=300,
+                response_format={"type": "json_object"},
+                max_tokens=512,
+                reasoning_effort="low",
+            )
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            text = str(exc).lower()
+            retryable = (
+                "503" in text
+                or "unavailable" in text
+                or "429" in text
+                or "rate limit" in text
+                or "internal" in text
+            )
+            if not retryable or attempt == 5:
+                raise
+            delay = min(32.0, 4.0 * (2 ** attempt))
+            logger.warning("Gemini retry %s after %.0fs: %s", attempt + 1, delay, type(exc).__name__)
+            time.sleep(delay)
+    if response is None:
+        raise last_error or RuntimeError("Gemini call failed")
     content = response.choices[0].message.content or '{"ads":[]}'
     usage = getattr(response, "usage", None)
     pin = int(getattr(usage, "prompt_tokens", 0) or est_in)
