@@ -19,10 +19,6 @@ ENABLE_LLM_CHAPTER_FALLBACK_TAGGING = False
 # production stays on the full AdClassifier LLM walk until this is explicitly
 # enabled *and* the experimental path is wired. See docs/experiments/AGENT_EVAL.md.
 ENABLE_BOW_SCOUT_GEMINI_CONFIRM = False
-# Eval-only: skip educational/self_promo confidence demotion in [0, 90]s.
-# Production/live default stays False (self-promo is a hard drop vs min_confidence).
-ENABLE_KEEP_PREROLL_SELF_PROMO = False
-PREROLL_SELF_PROMO_KEEP_SECONDS = 90.0
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"
@@ -46,6 +42,9 @@ OUTPUT_FADE_MS = 3000
 OUTPUT_MIN_AD_SEGMENT_SEPARATION_SECONDS = 60
 OUTPUT_MIN_AD_SEGMENT_LENGTH_SECONDS = 14
 OUTPUT_MIN_CONFIDENCE = 0.8
+# Do not fill a hole of show content between two ads (Up First 0–24s + 73–99s
+# membership CTAs were merged through ~50s of headlines at the 60s separation).
+OUTPUT_MIN_AD_CONTENT_GAP_SECONDS = 12
 
 # App defaults
 APP_BACKGROUND_UPDATE_INTERVAL_MINUTE = 30

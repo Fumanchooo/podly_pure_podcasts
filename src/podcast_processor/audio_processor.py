@@ -6,6 +6,7 @@ from app.models import Identification, ModelCall, Post, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_merger import AdMerger
 from podcast_processor.audio import clip_segments_with_fade, get_audio_duration_ms
+from shared import defaults as DEFAULTS
 from shared.config import Config
 
 
@@ -96,12 +97,17 @@ class AudioProcessor:
             )
             return []
 
-        # Content-aware merge
+        # Content-aware merge. Cap proximity at the content-hole gap so a
+        # 60s "min separation" does not glue two ads through show content.
+        merge_gap = min(
+            float(self.config.output.min_ad_segment_separation_seconds),
+            float(DEFAULTS.OUTPUT_MIN_AD_CONTENT_GAP_SECONDS),
+        )
         ad_groups = self.ad_merger.merge(
             ad_segments=ad_segments_with_text,
             identifications=valid_identifications,
-            max_gap=float(self.config.output.min_ad_segment_separation_seconds),
-            min_content_gap=12.0,
+            max_gap=merge_gap,
+            min_content_gap=float(DEFAULTS.OUTPUT_MIN_AD_CONTENT_GAP_SECONDS),
         )
 
         # If boundary refinement persisted refined windows on the post, prefer those
@@ -240,8 +246,12 @@ class AudioProcessor:
             min_separation=min_ad_segment_separation_seconds,
         )
 
+        merge_gap = min(
+            float(min_ad_segment_separation_seconds),
+            float(DEFAULTS.OUTPUT_MIN_AD_CONTENT_GAP_SECONDS),
+        )
         ad_segments = self._merge_close_segments(
-            ad_segments, min_separation=min_ad_segment_separation_seconds
+            ad_segments, min_separation=merge_gap
         )
         ad_segments = self._filter_short_segments(
             ad_segments, min_length=min_ad_segment_length_seconds

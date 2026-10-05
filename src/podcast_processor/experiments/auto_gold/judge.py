@@ -34,10 +34,22 @@ JUDGE_GEMINI_PRICES = ModelPrices(
 
 CompletionFn = Callable[..., Any]
 
-GOLD_JUDGE_SYSTEM_PROMPT = """You label whether a short podcast audio-chunk transcript contains external advertisements.
+GOLD_JUDGE_SYSTEM_PROMPT = """You label whether a short podcast audio-chunk transcript contains advertisements that should be removed.
 
 This is gold-standard labeling for an ad-removal eval, not production classification.
-Distinguish external sponsor ads from technical discussion and self-promotion.
+
+COUNT AS ADS (is_ad=true) all of the following, and fill ad_spans covering only the promo (not the following show content):
+- External sponsor ads (URLs, promo codes, paid reads, "brought to you by")
+- Self-promo and first-party app / newsletter / podcast plugs
+- Network or sister-show promos (e.g. "listen to X, wherever you get podcasts")
+- Membership / donation / subscriber asks (e.g. donate.npr.org, "support this show")
+
+Do NOT mark as ads:
+- Technical discussion that names a company as an example
+- Show open, cold open, or episode storytelling that is not a promo
+- Hosts talking about the news/story itself
+
+content_type may still be educational/self_promo for first-party/network/membership promos; that does not make is_ad false.
 
 Return strict JSON:
 {"is_ad": <bool>, "ad_spans": [{"start": <seconds.float>, "end": <seconds.float>, "confidence": <0.0-1.0>}], "content_type": "<promotional_external|educational/self_promo|technical_discussion|transition|none>", "confidence": <0.0-1.0>}

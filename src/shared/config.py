@@ -121,14 +121,6 @@ class Config(BaseModel):
             "explicitly enabled and the experimental classifier is wired."
         ),
     )
-    enable_keep_preroll_self_promo: bool = Field(
-        default=DEFAULTS.ENABLE_KEEP_PREROLL_SELF_PROMO,
-        description=(
-            "Eval-only: do not demote educational/self_promo confidence for "
-            "predictions at t=0–90s. Live production must leave this false; "
-            "self-promo demotion vs min_confidence=0.8 is otherwise a hard drop."
-        ),
-    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

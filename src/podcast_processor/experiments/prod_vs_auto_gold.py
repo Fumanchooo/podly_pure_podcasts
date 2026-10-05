@@ -139,14 +139,13 @@ def assert_scout_off(config: Config) -> None:
         )
 
 
-def production_config(*, keep_preroll_self_promo: bool = False) -> Config:
+def production_config() -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
     config = Config(
         llm_api_key=llm_key,
         llm_model=os.environ.get("LLM_MODEL") or DEFAULT_GEMINI_MODEL,
         enable_bow_scout_gemini_confirm=False,
-        enable_keep_preroll_self_promo=keep_preroll_self_promo,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
         output=OutputConfig(
@@ -688,7 +687,6 @@ def replay_production_from_cached_llm(
                 "spend_usd_after": 0.0,
                 "scout_confirm": False,
                 "replay_cached_llm": True,
-                "keep_preroll_self_promo": bool(config.enable_keep_preroll_self_promo),
             }
             prod_path = output_dir / "production" / f"{show_id}.json"
             _write_json(prod_path, payload)
@@ -701,3 +699,110 @@ def replay_production_from_cached_llm(
             )
         logger.info("replayed %s classification model_calls, $0 Gemini", n_replayed)
     return production
+
+
+def _is_self_promo_not_ad(row: dict[str, Any]) -> bool:
+    if row.get("skipped") or row.get("is_ad"):
+        return False
+    return str(row.get("content_type") or "") == "educational/self_promo"
+
+
+def rejudge_self_promo_not_ad_windows(
+    *,
+    source_dir: Path,
+    output_dir: Path,
+    max_usd: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float]:
+    """Re-judge not_ad educational/self_promo windows only. Other labels unchanged."""
+    labels_path = source_dir / "labels.json"
+    payload = _read_json(labels_path)
+    windows = list(payload.get("windows") or [])
+    downloads = {}
+    downloads_path = source_dir / "downloads.json"
+    if downloads_path.is_file():
+        downloads = _read_json(downloads_path)
+    targets = [
+        (idx, row) for idx, row in enumerate(windows) if _is_self_promo_not_ad(row)
+    ]
+    if not targets:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(output_dir / "label_flips.json", {"flips": [], "spend_usd": 0.0})
+        _write_json(output_dir / "labels.json", payload)
+        return windows, [], 0.0
+
+    whisper = ChunkWhisper(mode="local", model_name=DEFAULT_WHISPER_MODEL)
+    judge = GoldJudge(mode="gemini", max_usd=max_usd)
+    flips: list[dict[str, Any]] = []
+    for idx, row in targets:
+        show_id = str(row["show_id"])
+        start = float(row["start"])
+        end = float(row["end"])
+        audio = downloads.get(show_id, {}).get("audio_path")
+        wav = source_dir / "chunks" / show_id / f"{start:.0f}-{end:.0f}.wav"
+        if not wav.is_file():
+            if not audio:
+                logger.warning("skip rejudge %s %.0f-%.0f: no audio/wav", show_id, start, end)
+                continue
+            wav.parent.mkdir(parents=True, exist_ok=True)
+            extract_chunk_wav(Path(audio), wav, start, end)
+        chunk = CandidateChunk(
+            start=start,
+            end=end,
+            sources=list(row.get("sources") or []),
+        )
+        transcript = whisper.transcribe_chunk(chunk, wav)
+        label = judge.judge(transcript)
+        new_row = {
+            **row,
+            "is_ad": bool(label.is_ad) and not label.skipped,
+            "skipped": label.skipped,
+            "skip_reason": label.skip_reason,
+            "content_type": label.content_type,
+            "confidence": label.confidence,
+            "ad_spans": label.ad_spans,
+            "usd": (row.get("usd") or 0.0) + (label.usd or 0.0),
+            "excerpt": (transcript.text or row.get("excerpt") or "")[:240],
+            "rejudged_policy_2026_10_05": True,
+        }
+        windows[idx] = new_row
+        flip = {
+            "show_id": show_id,
+            "start": start,
+            "end": end,
+            "old_is_ad": bool(row.get("is_ad")),
+            "new_is_ad": bool(new_row["is_ad"]),
+            "old_content_type": row.get("content_type"),
+            "new_content_type": new_row.get("content_type"),
+            "old_ad_spans": row.get("ad_spans") or [],
+            "new_ad_spans": new_row.get("ad_spans") or [],
+            "usd": label.usd,
+            "skipped": label.skipped,
+            "skip_reason": label.skip_reason,
+        }
+        flips.append(flip)
+        logger.info(
+            "rejudge %s %.0f-%.0f is_ad %s -> %s type %s -> %s $%.4f",
+            show_id,
+            start,
+            end,
+            flip["old_is_ad"],
+            flip["new_is_ad"],
+            flip["old_content_type"],
+            flip["new_content_type"],
+            float(label.usd or 0.0),
+        )
+
+    out_payload = {
+        "judge_spend_usd": float(payload.get("judge_spend_usd") or 0.0) + judge.spent_usd,
+        "judge_calls": int(payload.get("judge_calls") or 0) + judge.n_calls,
+        "n_is_ad": sum(1 for row in windows if row.get("is_ad")),
+        "windows": windows,
+        "policy_rejudge_spend_usd": judge.spent_usd,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(output_dir / "labels.json", out_payload)
+    _write_json(
+        output_dir / "label_flips.json",
+        {"flips": flips, "spend_usd": judge.spent_usd, "n_targets": len(targets)},
+    )
+    return windows, flips, judge.spent_usd

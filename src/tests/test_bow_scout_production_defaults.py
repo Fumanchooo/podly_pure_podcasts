@@ -16,10 +16,8 @@ from shared.test_utils import create_standard_test_config
 
 def test_bow_scout_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM is False
-    assert DEFAULTS.ENABLE_KEEP_PREROLL_SELF_PROMO is False
     config = create_standard_test_config()
     assert config.enable_bow_scout_gemini_confirm is False
-    assert config.enable_keep_preroll_self_promo is False
     assert bow_scout_gemini_confirm_enabled(config) is False
 
 
@@ -55,5 +53,3 @@ def test_classify_falls_back_to_adclassifier_when_flag_on() -> None:
 def test_pydantic_config_field_defaults_false() -> None:
     field = Config.model_fields["enable_bow_scout_gemini_confirm"]
     assert field.default is False
-    keep = Config.model_fields["enable_keep_preroll_self_promo"]
-    assert keep.default is False

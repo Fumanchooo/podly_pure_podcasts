@@ -29,6 +29,7 @@ from podcast_processor.experiments.prod_vs_auto_gold import (
     load_production_cache,
     make_flask,
     production_config,
+    rejudge_self_promo_not_ad_windows,
     replay_production_from_cached_llm,
     run_production_cut,
     seed_spend_from_production,
@@ -68,15 +69,16 @@ def main() -> int:
         default=None,
         help=(
             "Rebuild cuts from cached ModelCall sqlite/labels in this dir "
-            "($0 Gemini). Implies no new classify/judge calls."
+            "($0 Gemini classify). Implies no new classify calls."
         ),
     )
     parser.add_argument(
-        "--keep-preroll-self-promo",
+        "--rejudge-self-promo-not-ad",
         action="store_true",
         help=(
-            "Eval-only: skip educational/self_promo demotion at t=0–90s. "
-            "Default off. Never pass this to the live Podly service."
+            "Re-judge only not_ad educational/self_promo windows under the "
+            "2026-10-05 policy (membership/network/self-promo are ads). "
+            "Requires --replay-from. Other labels are copied unchanged."
         ),
     )
     parser.add_argument(
@@ -124,21 +126,34 @@ def main() -> int:
         labels_path = source_dir / "labels.json"
         payload = json.loads(labels_path.read_text(encoding="utf-8"))
         labeled = list(payload.get("windows") or [])
-        judge_spend = float(payload.get("judge_spend_usd") or 0.0)
-        config = production_config(keep_preroll_self_promo=args.keep_preroll_self_promo)
-        assert_scout = DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM
-        if assert_scout or config.enable_bow_scout_gemini_confirm:
+        config = production_config()
+        if config.enable_bow_scout_gemini_confirm:
             print("enable_bow_scout_gemini_confirm is true; refusing.", file=sys.stderr)
             return 2
+        if args.rejudge_self_promo_not_ad:
+            labeled, flips, rejudge_usd = rejudge_self_promo_not_ad_windows(
+                source_dir=source_dir,
+                output_dir=output_dir,
+                max_usd=args.max_usd,
+            )
+            tracker.usd = rejudge_usd
+            n_flips = sum(1 for row in flips if row["old_is_ad"] != row["new_is_ad"])
+            notes.append(
+                f"Policy re-judge of {len(flips)} not_ad educational/self_promo "
+                f"windows; {n_flips} is_ad flips; ${rejudge_usd:.4f} Gemini."
+            )
+        else:
+            (output_dir / "labels.json").write_text(
+                labels_path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
         production = replay_production_from_cached_llm(
             source_dir=source_dir,
             output_dir=output_dir,
             config=config,
         )
-        tracker.usd = 0.0
         notes.append(
-            "Opening-FN eval replayed Friday's cached ModelCalls ($0 classify). "
-            f"enable_keep_preroll_self_promo={config.enable_keep_preroll_self_promo}."
+            "Replayed Friday's cached ModelCalls ($0 classify). "
+            "Self-promo is not demoted. Merge will not fill >12s content holes."
         )
     elif args.score_only:
         labels_path = output_dir / "labels.json"
@@ -164,9 +179,7 @@ def main() -> int:
         tracker.usd = max(tracker.usd, judge_spend)
         seed_spend_from_production(tracker, production)
         if not args.skip_production and not args.score_only:
-            config = production_config(
-                keep_preroll_self_promo=args.keep_preroll_self_promo
-            )
+            config = production_config()
             litellm_key = config.llm_api_key
             if not litellm_key:
                 notes.append("No LLM_API_KEY/Gemini key; production classify skipped.")
@@ -227,10 +240,10 @@ def main() -> int:
         )
     else:
         notes.append(
-            "H1 replay: keep educational/self_promo at t=0–90s. Inner-span openings "
-            "are 6/6; candidate ≥50% still fails on Wait Wait / Crime Junkie / WTF / "
-            "Darknet because the 90s gold window includes show open. Planet Money "
-            "membership (same NPR pitch as Up First, labeled not_ad) is the new FP."
+            "Policy fold 2026-10-05: self/network/membership promo counts as ads "
+            "(no -0.25 demotion). Content-hole merge cap 12s (Up First 0–24 + 73–99 "
+            "no longer fills headlines). not_ad educational/self_promo windows "
+            "re-judged; other labels frozen."
         )
 
     result = build_scorecard(
@@ -269,8 +282,8 @@ def main() -> int:
                 "t0_span_window_recall": t.t0_span_window_recall(),
                 "not_ad_seconds_cut": t.not_ad_seconds_cut,
                 "not_ad_seconds": t.not_ad_seconds,
-                "keep_preroll_self_promo": args.keep_preroll_self_promo,
                 "replay_from": str(args.replay_from) if args.replay_from else None,
+                "rejudge_self_promo_not_ad": args.rejudge_self_promo_not_ad,
             },
             indent=2,
         )

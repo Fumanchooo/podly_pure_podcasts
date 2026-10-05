@@ -32,7 +32,6 @@ from podcast_processor.token_rate_limiter import (
 )
 from podcast_processor.transcribe import Segment
 from podcast_processor.word_boundary_refiner import WordBoundaryRefiner
-from shared import defaults as DEFAULTS
 from shared.config import Config, TestWhisperConfig
 from shared.llm_utils import model_uses_max_completion_tokens
 
@@ -886,28 +885,18 @@ class AdClassifier:
         content_type: str | None,
         segment_offset: float | None = None,
     ) -> float:
-        """Demote confidence for self-promo/educational contexts.
+        """Adjust confidence by content type.
 
-        Combined with OUTPUT_MIN_CONFIDENCE=0.8 this is a hard drop: even
-        confidence 1.0 becomes 0.75. Eval-only enable_keep_preroll_self_promo
-        skips the educational/self_promo demotion for offsets in [0, 90]s.
+        Policy 2026-10-05: educational/self_promo (membership, network/sister
+        show, first-party app plugs) counts as an ad and is not demoted.
+        technical_discussion is still demoted so example-company talk stays
+        below OUTPUT_MIN_CONFIDENCE=0.8.
         """
+        del segment_offset
         if not content_type:
             return base_confidence
 
-        if content_type in {"educational/self_promo", "technical_discussion"}:
-            keep_preroll = bool(
-                getattr(self.config, "enable_keep_preroll_self_promo", False)
-            )
-            if (
-                keep_preroll
-                and content_type == "educational/self_promo"
-                and segment_offset is not None
-                and 0.0
-                <= float(segment_offset)
-                <= DEFAULTS.PREROLL_SELF_PROMO_KEEP_SECONDS
-            ):
-                return base_confidence
+        if content_type == "technical_discussion":
             return max(0.0, base_confidence - 0.25)
         if content_type == "transition":
             return max(0.0, base_confidence - 0.1)

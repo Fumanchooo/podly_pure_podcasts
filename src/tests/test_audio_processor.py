@@ -145,6 +145,28 @@ def test_merge_ad_segments_end_extension(
     assert merged[0] == (28000, 30000)  # Extended to end
 
 
+def test_merge_does_not_fill_long_content_hole(
+    test_processor_with_mocks: AudioProcessor,
+) -> None:
+    """60s min-separation must not glue two ads through ~50s of show content."""
+    duration_ms = 959_000
+    ad_segments = [
+        (0.0, 24.0),
+        (73.0, 99.0),
+    ]
+
+    merged = test_processor_with_mocks.merge_ad_segments(
+        duration_ms=duration_ms,
+        ad_segments=ad_segments,
+        min_ad_segment_length_seconds=14.0,
+        min_ad_segment_separation_seconds=60.0,
+    )
+
+    assert len(merged) == 2
+    assert merged[0] == (0, 24000)
+    assert merged[1] == (73000, 99000)
+
+
 def test_process_audio(
     app: Flask,
     test_config: Config,

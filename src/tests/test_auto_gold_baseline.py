@@ -611,3 +611,15 @@ def test_judge_bills_gemini_38_flash_usage() -> None:
     assert label.usd == pytest.approx(1000 / 1_000_000 * 0.75 + 100 / 1_000_000 * 3.75)
     assert judge.spent_usd == pytest.approx(label.usd)
     assert judge.n_calls == 1
+
+
+def test_judge_prompt_counts_self_promo_membership_as_ads() -> None:
+    from podcast_processor.experiments.auto_gold.judge import GOLD_JUDGE_SYSTEM_PROMPT
+
+    prompt = GOLD_JUDGE_SYSTEM_PROMPT.lower()
+    assert "membership" in prompt
+    assert "sister-show" in prompt or "sister show" in prompt
+    assert "is_ad=true" in prompt or "is_ad true" in prompt
+    assert "donate" in prompt
+    assert "do not mark as ads" in prompt
+    assert "technical discussion" in prompt
