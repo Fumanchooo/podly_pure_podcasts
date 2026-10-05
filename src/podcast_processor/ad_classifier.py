@@ -32,6 +32,7 @@ from podcast_processor.token_rate_limiter import (
 )
 from podcast_processor.transcribe import Segment
 from podcast_processor.word_boundary_refiner import WordBoundaryRefiner
+from shared import defaults as DEFAULTS
 from shared.config import Config, TestWhisperConfig
 from shared.llm_utils import model_uses_max_completion_tokens
 
@@ -809,11 +810,12 @@ class AdClassifier:
             adjusted_confidence = self._adjust_confidence(
                 base_confidence=pred.confidence,
                 content_type=content_type,
+                segment_offset=pred.segment_offset,
             )
 
             if adjusted_confidence < self.config.output.min_confidence:
                 self.logger.info(
-                    f"Ad prediction offset {pred.segment_offset:.2f} for post {model_call.post_id} ignored due to low confidence: {pred.confidence:.2f} (min: {self.config.output.min_confidence})"
+                    f"Ad prediction offset {pred.segment_offset:.2f} for post {model_call.post_id} ignored due to low confidence: {adjusted_confidence:.2f} (raw {pred.confidence:.2f}, content_type={content_type}, min: {self.config.output.min_confidence})"
                 )
                 continue
 
@@ -878,13 +880,34 @@ class AdClassifier:
         return inserted, matched_segments
 
     def _adjust_confidence(
-        self, *, base_confidence: float, content_type: str | None
+        self,
+        *,
+        base_confidence: float,
+        content_type: str | None,
+        segment_offset: float | None = None,
     ) -> float:
-        """Demote confidence for self-promo/educational contexts."""
+        """Demote confidence for self-promo/educational contexts.
+
+        Combined with OUTPUT_MIN_CONFIDENCE=0.8 this is a hard drop: even
+        confidence 1.0 becomes 0.75. Eval-only enable_keep_preroll_self_promo
+        skips the educational/self_promo demotion for offsets in [0, 90]s.
+        """
         if not content_type:
             return base_confidence
 
         if content_type in {"educational/self_promo", "technical_discussion"}:
+            keep_preroll = bool(
+                getattr(self.config, "enable_keep_preroll_self_promo", False)
+            )
+            if (
+                keep_preroll
+                and content_type == "educational/self_promo"
+                and segment_offset is not None
+                and 0.0
+                <= float(segment_offset)
+                <= DEFAULTS.PREROLL_SELF_PROMO_KEEP_SECONDS
+            ):
+                return base_confidence
             return max(0.0, base_confidence - 0.25)
         if content_type == "transition":
             return max(0.0, base_confidence - 0.1)

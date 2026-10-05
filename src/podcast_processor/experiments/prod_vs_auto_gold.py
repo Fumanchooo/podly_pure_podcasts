@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +19,7 @@ from flask import Flask
 from jinja2 import Template
 
 from app.extensions import db
-from app.models import Feed, Post, TranscriptSegment
+from app.models import Feed, Identification, ModelCall, Post, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_classifier import AdClassifier
 from podcast_processor.audio import clip_segments_with_fade, get_audio_duration_ms
@@ -138,13 +139,14 @@ def assert_scout_off(config: Config) -> None:
         )
 
 
-def production_config() -> Config:
+def production_config(*, keep_preroll_self_promo: bool = False) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
     config = Config(
         llm_api_key=llm_key,
         llm_model=os.environ.get("LLM_MODEL") or DEFAULT_GEMINI_MODEL,
         enable_bow_scout_gemini_confirm=False,
+        enable_keep_preroll_self_promo=keep_preroll_self_promo,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
         output=OutputConfig(
@@ -565,3 +567,137 @@ def build_scorecard(
 def write_scorecard(result: ScorecardResult, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(render_scorecard_md(result), encoding="utf-8")
+
+
+def _is_classification_response(response: str | None) -> bool:
+    if not response:
+        return False
+    head = response.lstrip()[:240]
+    if "refined_start" in head:
+        return False
+    return '"ad_segments"' in response or "'ad_segments'" in response
+
+
+def replay_production_from_cached_llm(
+    *,
+    source_dir: Path,
+    output_dir: Path,
+    config: Config,
+) -> dict[str, dict[str, Any]]:
+    """Rebuild cuts from cached ModelCall responses. No new LLM calls.
+
+    Copies Friday's scorecard sqlite, drops identifications, re-applies
+    _create_identifications with the current confidence policy, expands
+    neighbors, and reuses existing refined_ad_boundaries (no refine LLM).
+    """
+    src_sqlite = source_dir / "scorecard.sqlite"
+    if not src_sqlite.is_file():
+        raise FileNotFoundError(f"missing cached sqlite: {src_sqlite}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dest_sqlite = output_dir / "scorecard.sqlite"
+    shutil.copy2(src_sqlite, dest_sqlite)
+
+    source_prod = load_production_cache(source_dir)
+    app = make_flask(dest_sqlite)
+    force_local_writer()
+    production: dict[str, dict[str, Any]] = {}
+
+    with app.app_context():
+        db.session.query(Identification).delete()
+        db.session.commit()
+
+        classifier = AdClassifier(config=config, db_session=db.session)
+        processor = AudioProcessor(config=config, db_session=db.session)
+        posts = db.session.query(Post).order_by(Post.id).all()
+        n_replayed = 0
+        for post in posts:
+            guid = str(post.guid or "")
+            show_id = guid.split(":", 1)[-1] if guid.startswith("scorecard:") else guid
+            segments = (
+                db.session.query(TranscriptSegment)
+                .filter_by(post_id=post.id)
+                .order_by(TranscriptSegment.sequence_num)
+                .all()
+            )
+            by_seq = {int(seg.sequence_num): seg for seg in segments}
+            model_calls = (
+                db.session.query(ModelCall)
+                .filter_by(post_id=post.id, status="success")
+                .order_by(ModelCall.id)
+                .all()
+            )
+            for model_call in model_calls:
+                if not _is_classification_response(model_call.response):
+                    continue
+                chunk = [
+                    by_seq[seq]
+                    for seq in range(
+                        int(model_call.first_segment_sequence_num),
+                        int(model_call.last_segment_sequence_num) + 1,
+                    )
+                    if seq in by_seq
+                ]
+                if not chunk:
+                    continue
+                classifier._process_successful_response(
+                    model_call=model_call,
+                    current_chunk_db_segments=chunk,
+                )
+                n_replayed += 1
+
+            ad_identifications = (
+                db.session.query(Identification)
+                .join(TranscriptSegment)
+                .filter(
+                    TranscriptSegment.post_id == post.id,
+                    Identification.label == "ad",
+                )
+                .all()
+            )
+            if ad_identifications:
+                model_call = ad_identifications[0].model_call
+                if model_call is not None:
+                    classifier.expand_neighbors_bulk(
+                        ad_identifications=ad_identifications,
+                        model_call=model_call,
+                        post_id=post.id,
+                        window=5,
+                    )
+
+            ad_seconds = processor.get_ad_segments(post)
+            prior = source_prod.get(show_id) or {}
+            duration_s = float(prior.get("duration_s") or 0.0)
+            duration_ms = int(round(duration_s * 1000.0))
+            merged_ms = processor.merge_ad_segments(
+                duration_ms=duration_ms,
+                ad_segments=ad_seconds,
+                min_ad_segment_length_seconds=float(
+                    config.output.min_ad_segment_length_seconds
+                ),
+                min_ad_segment_separation_seconds=float(
+                    config.output.min_ad_segment_separation_seconds
+                ),
+            )
+            payload = {
+                "show_id": show_id,
+                "n_transcript_segments": len(segments),
+                "ad_segments_s": [[a, b] for a, b in ad_seconds],
+                "cut_segments_s": [[a / 1000.0, b / 1000.0] for a, b in merged_ms],
+                "cut_path": prior.get("cut_path"),
+                "duration_s": duration_s,
+                "spend_usd_after": 0.0,
+                "scout_confirm": False,
+                "replay_cached_llm": True,
+                "keep_preroll_self_promo": bool(config.enable_keep_preroll_self_promo),
+            }
+            prod_path = output_dir / "production" / f"{show_id}.json"
+            _write_json(prod_path, payload)
+            production[show_id] = payload
+            logger.info(
+                "replayed %s ads=%s cuts=%s",
+                show_id,
+                payload["ad_segments_s"][:3],
+                payload["cut_segments_s"][:3],
+            )
+        logger.info("replayed %s classification model_calls, $0 Gemini", n_replayed)
+    return production

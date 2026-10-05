@@ -19,6 +19,10 @@ ENABLE_LLM_CHAPTER_FALLBACK_TAGGING = False
 # production stays on the full AdClassifier LLM walk until this is explicitly
 # enabled *and* the experimental path is wired. See docs/experiments/AGENT_EVAL.md.
 ENABLE_BOW_SCOUT_GEMINI_CONFIRM = False
+# Eval-only: skip educational/self_promo confidence demotion in [0, 90]s.
+# Production/live default stays False (self-promo is a hard drop vs min_confidence).
+ENABLE_KEEP_PREROLL_SELF_PROMO = False
+PREROLL_SELF_PROMO_KEEP_SECONDS = 90.0
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

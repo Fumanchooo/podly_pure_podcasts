@@ -324,6 +324,57 @@ def test_compute_next_overlap_segments_baseline_overlap_without_ads(
     assert [seg.sequence_num for seg in result] == [4, 5, 6, 7]
 
 
+def test_self_promo_demotion_is_hard_drop_vs_production_min_confidence(
+    app: Flask,
+) -> None:
+    with app.app_context():
+        config = create_standard_test_config()
+        config.output.min_confidence = 0.8
+        classifier = AdClassifier(config=config, db_session=db.session)
+        adjusted = classifier._adjust_confidence(
+            base_confidence=0.95,
+            content_type="educational/self_promo",
+            segment_offset=0.0,
+        )
+        assert adjusted == 0.70
+        assert adjusted < config.output.min_confidence
+        floor = classifier._adjust_confidence(
+            base_confidence=1.0,
+            content_type="educational/self_promo",
+            segment_offset=0.0,
+        )
+        assert floor == 0.75
+        assert floor < config.output.min_confidence
+
+
+def test_keep_preroll_self_promo_skips_demotion_only_in_opening(app: Flask) -> None:
+    with app.app_context():
+        config = create_standard_test_config()
+        config.output.min_confidence = 0.8
+        config.enable_keep_preroll_self_promo = True
+        classifier = AdClassifier(config=config, db_session=db.session)
+        opening = classifier._adjust_confidence(
+            base_confidence=0.85,
+            content_type="educational/self_promo",
+            segment_offset=0.0,
+        )
+        assert opening == 0.85
+        assert opening >= config.output.min_confidence
+        midroll = classifier._adjust_confidence(
+            base_confidence=0.95,
+            content_type="educational/self_promo",
+            segment_offset=400.0,
+        )
+        assert midroll == 0.70
+        assert midroll < config.output.min_confidence
+        technical = classifier._adjust_confidence(
+            base_confidence=0.95,
+            content_type="technical_discussion",
+            segment_offset=0.0,
+        )
+        assert technical == 0.70
+
+
 def test_create_identifications_skips_existing_ad_label(
     test_classifier_with_mocks: AdClassifier,
 ) -> None:
