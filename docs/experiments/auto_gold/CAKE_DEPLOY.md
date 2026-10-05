@@ -16,7 +16,7 @@ worktrees).
 | live checkout | `/home/jdr/cursor/repos/podly_pure_podcasts` |
 | live branch before deploy | `main` |
 | live commit before deploy | `0b8160ac7770593d3c99f3c7e525e5882859be4e` |
-| experiment | `cursor/opening-fn-2026-10-05` `@` `5f9dc22deead4cce79370ea821cb6175d9057d65` |
+| experiment | `cursor/opening-fn-2026-10-05` in `/home/jdr/cursor/repos/podly_scorecard` (first live switch `5f9dc22`; precision fold `180d749`+) |
 | instance dir | `/home/jdr/cursor/repos/podly_pure_podcasts/src/instance` |
 | timestamped backup | `/home/jdr/cursor/tmp/podly_deploy_backup_20261005_091522` |
 
@@ -67,7 +67,7 @@ systemctl --user start podly.service
 
 ```bash
 LIVE=/home/jdr/cursor/repos/podly_pure_podcasts
-EXP=5f9dc22deead4cce79370ea821cb6175d9057d65
+EXP=$(git -C /home/jdr/cursor/repos/podly_scorecard rev-parse cursor/opening-fn-2026-10-05)
 
 # Do not `uv sync` the live `.venv` (it tries to pull CUDA torch). Lock was
 # identical; flask-migrate runs on writer start (`upgrade(revision="heads")`).
