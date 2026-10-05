@@ -52,11 +52,16 @@ from podcast_processor.quote_anchor import (
     SegmentSpan,
     WordTiming,
     cuts_from_matches,
+    hybrid_cuts_from_matches,
     match_rate,
     resolve_ads,
     word_index_range,
 )
-from podcast_processor.quote_anchor_prompt import QUOTE_SYSTEM_PROMPT, quote_user_prompt
+from podcast_processor.quote_anchor_prompt import (
+    QUOTE_SYSTEM_PROMPT,
+    quote_user_prompt,
+    system_prompt_for,
+)
 from shared import defaults as DEFAULTS
 from shared.defaults import PROCESSING_NUM_SEGMENTS_TO_INPUT_TO_PROMPT
 
@@ -256,8 +261,9 @@ def complete_json(
     budget: GeminiBudget,
     tokens: TokenTotals,
     model: str,
+    system_prompt: str = QUOTE_SYSTEM_PROMPT,
 ) -> str:
-    cache_path = cache_dir / f"{_prompt_hash(QUOTE_SYSTEM_PROMPT, user)}.json"
+    cache_path = cache_dir / f"{_prompt_hash(system_prompt, user)}.json"
     if cache_path.is_file():
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
         pin = int(payload.get("input_tokens") or 0)
@@ -267,7 +273,7 @@ def complete_json(
         tokens.calls += 1
         budget.record_cache(input_tokens=pin, output_tokens=pout)
         return str(payload.get("content") or '{"ads":[]}')
-    est_in = estimate_tokens_from_text(QUOTE_SYSTEM_PROMPT + user)
+    est_in = estimate_tokens_from_text(system_prompt + user)
     est_usd = usd_for_tokens(est_in, 400, QUOTE_PRICES)
     if not budget.allow(est_usd):
         raise BudgetExceeded(
@@ -276,7 +282,7 @@ def complete_json(
     response = litellm.completion(
         model=model,
         messages=[
-            {"role": "system", "content": QUOTE_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user},
         ],
         timeout=300,
@@ -352,7 +358,12 @@ def quote_cuts_for_show(
     tokens: TokenTotals,
     model: str,
     silence_cache_dir: Path | None = None,
+    prompt_version: str = "v1",
+    cut_mode: str = "pure",
+    baseline_cuts: list[tuple[float, float]] | None = None,
+    pad_seconds: float = 0.0,
 ) -> tuple[list[tuple[float, float]], list[QuoteMatch]]:
+    system_prompt = system_prompt_for(prompt_version)
     matches: list[QuoteMatch] = []
     idx = 0
     while idx < len(segments):
@@ -363,6 +374,7 @@ def quote_cuts_for_show(
             title=title,
             start_seconds=chunk_start,
             texts=[seg.text for seg in chunk],
+            prompt_version=prompt_version,
         )
         raw = complete_json(
             user=user,
@@ -370,6 +382,7 @@ def quote_cuts_for_show(
             budget=budget,
             tokens=tokens,
             model=model,
+            system_prompt=system_prompt,
         )
         ads = [ad for ad in parse_quote_ads(raw) if keep_ad(ad)]
         w0, w1 = word_index_range(words, max(0.0, chunk_start - 1.0), chunk_end + 1.0)
@@ -385,10 +398,28 @@ def quote_cuts_for_show(
             )
         )
         idx += len(chunk)
-    cuts = cuts_from_matches(matches)
+    gaps = []
     if audio_path is not None and audio_path.is_file():
-        gaps = load_silence_gaps(show_id, audio_path, silence_cache_dir)
-        cuts = refine_cuts(cuts, audio_path=audio_path, gaps=gaps, radius=2.0)
+        gaps = [
+            (g.start, g.end)
+            for g in load_silence_gaps(show_id, audio_path, silence_cache_dir)
+        ]
+    if cut_mode == "hybrid":
+        cuts = hybrid_cuts_from_matches(
+            matches,
+            gaps,
+            baseline=baseline_cuts,
+            pad_seconds=pad_seconds,
+        )
+    else:
+        cuts = cuts_from_matches(matches)
+        if audio_path is not None and audio_path.is_file():
+            from podcast_processor.boundary_snap import SilenceGap
+
+            typed_gaps = [SilenceGap(start=a, end=b) for a, b in gaps]
+            cuts = refine_cuts(
+                cuts, audio_path=audio_path, gaps=typed_gaps, radius=2.0
+            )
     tokens.n_episodes += 1
     return cuts, matches
 
@@ -406,6 +437,13 @@ def run_quote_anchor_eval(
     whisper_model: str = "base",
     prior_usd: float = PRIOR_UTC_SPEND_USD,
     silence_cache_dir: Path | None = None,
+    prompt_version: str = "v1",
+    cut_mode: str = "pure",
+    skip_transcribe: bool = False,
+    baseline_cuts: dict[str, list[tuple[float, float]]] | None = None,
+    pad_seconds: float = 0.0,
+    llm_cache_dir: Path | None = None,
+    budget_ledger: Path | None = None,
 ) -> QuoteEvalResult:
     if DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM:
         raise RuntimeError("enable_bow_scout_gemini_confirm must stay false")
@@ -432,16 +470,16 @@ def run_quote_anchor_eval(
     budget = GeminiBudget(
         cap_usd=UTC_DAY_CAP_USD,
         prior_usd=prior_usd,
-        ledger=output_dir / "gemini_budget.json",
+        ledger=budget_ledger or (output_dir / "gemini_budget.json"),
     )
-    llm_cache = output_dir / "llm_cache"
+    llm_cache = llm_cache_dir or (output_dir / "llm_cache")
     tokens = TokenTotals()
     model_name = model or DEFAULT_GEMINI_MODEL
     production: dict[str, dict[str, Any]] = {}
     all_matches: list[QuoteMatch] = []
     asr_model: Any = None
     notes: list[str] = [
-        "Quote-anchor eval: plain-text chunks, word-level quotes, ±2s silence snap. "
+        f"Quote-anchor eval prompt={prompt_version} cut_mode={cut_mode}. "
         "Scout confirm off. Self-promo counts as ads. general_podcast_ads LOCKED."
     ]
     for show_id in scored:
@@ -455,6 +493,9 @@ def run_quote_anchor_eval(
         if payload and payload.get("word_timestamps") and payload.get("words"):
             words = words_from_payload(payload)
         if not words:
+            if skip_transcribe:
+                notes.append(f"skip {show_id}: no word-timestamp cache")
+                continue
             logger.info("transcribing words for %s", show_id)
             if asr_model is None:
                 import whisper
@@ -484,6 +525,10 @@ def run_quote_anchor_eval(
                 tokens=tokens,
                 model=model_name,
                 silence_cache_dir=silence_cache_dir,
+                prompt_version=prompt_version,
+                cut_mode=cut_mode,
+                baseline_cuts=(baseline_cuts or {}).get(show_id),
+                pad_seconds=pad_seconds,
             )
         except BudgetExceeded as exc:
             budget.blocked = True
@@ -505,6 +550,21 @@ def run_quote_anchor_eval(
             ),
             "n_dropped": dropped_here,
             "match_rate": match_rate(matches),
+            "prompt_version": prompt_version,
+            "cut_mode": cut_mode,
+            "quotes": [
+                {
+                    "start": item.start,
+                    "end": item.end,
+                    "method": item.method,
+                    "score": item.score,
+                    "start_quote": item.ad.start_quote,
+                    "end_quote": item.ad.end_quote,
+                    "bound_start": item.bound_start,
+                    "bound_end": item.bound_end,
+                }
+                for item in matches
+            ],
         }
         (output_dir / "production").mkdir(parents=True, exist_ok=True)
         (output_dir / "production" / f"{show_id}.json").write_text(

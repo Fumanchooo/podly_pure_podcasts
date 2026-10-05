@@ -49,6 +49,8 @@ class QuoteMatch:
     method: Literal["word", "segment_fallback", "chunk_fallback"]
     score: float
     dropped: bool = False
+    bound_start: float | None = None
+    bound_end: float | None = None
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -267,23 +269,34 @@ def resolve_ads(
     )
     matches: list[QuoteMatch] = []
     for ad, hit in ordered:
+        seg_bound = fallback_segment_edge(
+            ad, segments, chunk_start=chunk_start, chunk_end=chunk_end
+        )
         if hit is not None:
             i0, i1, score = hit
             start = words[i0].start
             end = words[i1 - 1].end
             if end > start:
+                if seg_bound is not None:
+                    bound_start = min(seg_bound[0], start)
+                    bound_end = max(seg_bound[1], end)
+                else:
+                    bound_start, bound_end = start, end
                 matches.append(
                     QuoteMatch(
-                        ad=ad, start=start, end=end, method="word", score=score
+                        ad=ad,
+                        start=start,
+                        end=end,
+                        method="word",
+                        score=score,
+                        bound_start=bound_start,
+                        bound_end=bound_end,
                     )
                 )
                 continue
             logger.warning("word match collapsed for %r-%r", ad.start_quote, ad.end_quote)
-        fallback = fallback_segment_edge(
-            ad, segments, chunk_start=chunk_start, chunk_end=chunk_end
-        )
-        if fallback is not None:
-            start, end, score = fallback
+        if seg_bound is not None:
+            start, end, score = seg_bound
             logger.info(
                 "quote match miss; segment-edge fallback %s-%.1f-%.1f",
                 ad.start_quote[:40],
@@ -297,6 +310,8 @@ def resolve_ads(
                     end=end,
                     method="segment_fallback",
                     score=score,
+                    bound_start=start,
+                    bound_end=end,
                 )
             )
             continue
@@ -313,6 +328,8 @@ def resolve_ads(
                 end=max(chunk_end, chunk_start + 0.5),
                 method="chunk_fallback",
                 score=0.0,
+                bound_start=chunk_start,
+                bound_end=max(chunk_end, chunk_start + 0.5),
             )
         )
     return matches
@@ -339,3 +356,95 @@ def word_index_range(
 
 def cuts_from_matches(matches: list[QuoteMatch]) -> list[tuple[float, float]]:
     return [(item.start, item.end) for item in matches if item.end > item.start]
+
+
+def expand_outward_to_silence(
+    start: float,
+    end: float,
+    gaps: list[tuple[float, float]],
+    *,
+    bound_start: float,
+    bound_end: float,
+    pad_seconds: float = 0.0,
+) -> tuple[float, float]:
+    """Grow a quote core outward to the nearest silence, never past the bound.
+
+    Start snaps to the nearest silence_end in [bound_start, core_start].
+    End snaps to the nearest silence_start in [core_end, bound_end].
+    If no silence lies in that outward band, the core edge is kept (then
+    clipped to the bound). pad_seconds extends the core before snapping.
+    """
+    lo = min(float(bound_start), float(bound_end))
+    hi = max(float(bound_start), float(bound_end))
+    core_start = min(max(float(start) - float(pad_seconds), lo), hi)
+    core_end = min(max(float(end) + float(pad_seconds), lo), hi)
+    if core_end <= core_start:
+        return lo, hi
+
+    start_hits = [
+        float(gap_end)
+        for gap_start, gap_end in gaps
+        if lo - 1e-9 <= float(gap_end) <= core_start + 1e-9
+    ]
+    end_hits = [
+        float(gap_start)
+        for gap_start, gap_end in gaps
+        if core_end - 1e-9 <= float(gap_start) <= hi + 1e-9
+    ]
+    new_start = min(start_hits, key=lambda t: (abs(t - core_start), t)) if start_hits else core_start
+    new_end = min(end_hits, key=lambda t: (abs(t - core_end), -t)) if end_hits else core_end
+    new_start = min(max(new_start, lo), core_start)
+    new_end = max(min(new_end, hi), core_end)
+    if new_end <= new_start:
+        return core_start, core_end
+    return new_start, new_end
+
+
+def clip_cut_to_baseline(
+    start: float,
+    end: float,
+    baseline: list[tuple[float, float]],
+) -> tuple[float, float]:
+    """Do not extend an edge past an overlapping baseline cut.
+
+    If the quote does not overlap any baseline cut, leave it unchanged so a
+    newly found ad is not dropped.
+    """
+    overlapping = [
+        (b0, b1)
+        for b0, b1 in baseline
+        if min(end, b1) > max(start, b0)
+    ]
+    if not overlapping:
+        return start, end
+    bound0 = min(b0 for b0, _ in overlapping)
+    bound1 = max(b1 for _, b1 in overlapping)
+    return max(start, bound0), min(end, bound1)
+
+
+def hybrid_cuts_from_matches(
+    matches: list[QuoteMatch],
+    gaps: list[tuple[float, float]],
+    *,
+    baseline: list[tuple[float, float]] | None = None,
+    pad_seconds: float = 0.0,
+) -> list[tuple[float, float]]:
+    cuts: list[tuple[float, float]] = []
+    for item in matches:
+        if item.end <= item.start:
+            continue
+        bound_start = item.bound_start if item.bound_start is not None else item.start
+        bound_end = item.bound_end if item.bound_end is not None else item.end
+        start, end = expand_outward_to_silence(
+            item.start,
+            item.end,
+            gaps,
+            bound_start=bound_start,
+            bound_end=bound_end,
+            pad_seconds=pad_seconds,
+        )
+        if baseline:
+            start, end = clip_cut_to_baseline(start, end, baseline)
+        if end > start:
+            cuts.append((start, end))
+    return cuts

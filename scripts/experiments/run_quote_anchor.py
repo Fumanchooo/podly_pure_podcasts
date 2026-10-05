@@ -93,6 +93,17 @@ def main() -> int:
         type=Path,
         default=DEFAULT_SILENCE_CACHE,
     )
+    parser.add_argument("--prompt-version", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--cut-mode", choices=("pure", "hybrid"), default="pure")
+    parser.add_argument(
+        "--skip-transcribe",
+        action="store_true",
+        help="Reuse cached word timestamps; never call Whisper.",
+    )
+    parser.add_argument("--pad-seconds", type=float, default=0.0)
+    parser.add_argument("--llm-cache-dir", type=Path, default=None)
+    parser.add_argument("--budget-ledger", type=Path, default=None)
+    parser.add_argument("--words-dir", type=Path, default=None)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
@@ -110,12 +121,18 @@ def main() -> int:
         transcripts_dir=args.audio_dir / "transcripts",
         audio_dir=args.audio_dir,
         sqlite_path=args.sqlite,
-        words_dir=args.output_dir / "words",
+        words_dir=args.words_dir or (args.output_dir / "words"),
         output_dir=args.output_dir,
         model=args.model,
         whisper_model=args.whisper_model,
         prior_usd=args.prior_usd,
         silence_cache_dir=args.silence_cache,
+        prompt_version=args.prompt_version,
+        cut_mode=args.cut_mode,
+        skip_transcribe=args.skip_transcribe,
+        pad_seconds=args.pad_seconds,
+        llm_cache_dir=args.llm_cache_dir,
+        budget_ledger=args.budget_ledger,
     )
     sc = result.scorecard.totals
     pin, pout = result.tokens.per_episode(max(1, result.scorecard.n_shows_scored))

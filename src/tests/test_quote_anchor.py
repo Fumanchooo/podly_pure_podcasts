@@ -188,3 +188,90 @@ def test_word_match_rate_is_one_when_all_hit() -> None:
     )
     assert matches[0].method == "word"
     assert match_rate(matches) == 1.0
+
+
+def test_expand_outward_to_silence_stays_inside_bound() -> None:
+    from podcast_processor.quote_anchor import expand_outward_to_silence
+
+    start, end = expand_outward_to_silence(
+        10.0,
+        12.0,
+        [(7.0, 8.0), (13.0, 14.0), (1.0, 2.0), (20.0, 21.0)],
+        bound_start=6.0,
+        bound_end=15.0,
+    )
+    assert start == 8.0
+    assert end == 13.0
+
+
+def test_expand_outward_no_silence_keeps_quote() -> None:
+    from podcast_processor.quote_anchor import expand_outward_to_silence
+
+    start, end = expand_outward_to_silence(
+        10.0, 12.0, [], bound_start=4.0, bound_end=20.0
+    )
+    assert start == 10.0
+    assert end == 12.0
+
+
+def test_expand_outward_never_wider_than_bound() -> None:
+    from podcast_processor.quote_anchor import expand_outward_to_silence
+
+    start, end = expand_outward_to_silence(
+        10.0,
+        12.0,
+        [(0.0, 1.0), (18.0, 19.0)],
+        bound_start=9.0,
+        bound_end=13.0,
+    )
+    assert start == 10.0
+    assert end == 12.0
+
+
+def test_expand_pad_then_snap_still_clipped() -> None:
+    from podcast_processor.quote_anchor import expand_outward_to_silence
+
+    start, end = expand_outward_to_silence(
+        10.0,
+        12.0,
+        [(7.5, 8.0), (14.0, 14.5)],
+        bound_start=8.5,
+        bound_end=13.0,
+        pad_seconds=2.0,
+    )
+    assert start == 8.5
+    assert end == 13.0
+
+
+def test_clip_cut_to_baseline_does_not_drop_new_ads() -> None:
+    from podcast_processor.quote_anchor import clip_cut_to_baseline
+
+    assert clip_cut_to_baseline(50.0, 60.0, [(0.0, 10.0)]) == (50.0, 60.0)
+    assert clip_cut_to_baseline(8.0, 14.0, [(0.0, 12.0)]) == (8.0, 12.0)
+
+
+def test_hybrid_uses_segment_edge_bound_from_resolve() -> None:
+    words = _words(
+        ("support", 8.0, 8.3),
+        ("comes", 8.3, 8.6),
+        ("from", 8.6, 8.9),
+        ("acme", 9.0, 9.4),
+        ("visit", 11.0, 11.3),
+        ("acme", 11.3, 11.6),
+        ("dot", 11.6, 11.8),
+        ("com", 11.8, 12.0),
+    )
+    segments = [
+        SegmentSpan(start=7.0, end=9.5, text="support comes from acme"),
+        SegmentSpan(start=11.0, end=13.0, text="visit acme dot com thanks"),
+    ]
+    ad = QuoteAd(
+        start_quote="comes from acme",
+        end_quote="visit acme dot com",
+        content_type="promotional_external",
+        confidence=0.9,
+    )
+    matches = resolve_ads([ad], words, segments, chunk_start=7.0, chunk_end=13.0)
+    assert matches[0].method == "word"
+    assert matches[0].bound_start == 7.0
+    assert matches[0].bound_end == 13.0
