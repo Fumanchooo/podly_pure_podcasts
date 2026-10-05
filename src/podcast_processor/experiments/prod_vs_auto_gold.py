@@ -528,6 +528,7 @@ def run_quote_anchor_production_cut(
     llm_cache_dir: Path | None = None,
     complete_fn: Any | None = None,
     skip_audio_clip: bool = True,
+    silence_gaps: list[tuple[float, float]] | None = None,
 ) -> dict[str, Any]:
     """Integrated quote-anchor classify + AudioProcessor merge/snap.
 
@@ -602,6 +603,7 @@ def run_quote_anchor_production_cut(
             word_cache_path=words_cache,
             llm_cache_dir=llm_cache_dir,
         )
+        classifier.silence_gaps_override = silence_gaps
         classifier.classify(transcript_segments=db_segments, post=post)
         processor = AudioProcessor(config=config, db_session=db.session)
         ad_seconds = processor.get_ad_segments(post)
@@ -616,7 +618,18 @@ def run_quote_anchor_production_cut(
                 config.output.min_ad_segment_separation_seconds
             ),
         )
-        merged_ms = processor.snap_merged_segments(merged_ms, str(audio_path))
+        if silence_gaps is not None:
+            from podcast_processor.boundary_snap import SilenceGap, refine_cuts
+
+            typed_gaps = [SilenceGap(start=a, end=b) for a, b in silence_gaps]
+            snapped = refine_cuts(
+                [(a / 1000.0, b / 1000.0) for a, b in merged_ms],
+                gaps=typed_gaps,
+                radius=2.0,
+            )
+            merged_ms = [(int(a * 1000), int(b * 1000)) for a, b in snapped]
+        else:
+            merged_ms = processor.snap_merged_segments(merged_ms, str(audio_path))
         if not skip_audio_clip and merged_ms:
             clip_segments_with_fade(
                 ad_segments_ms=merged_ms,

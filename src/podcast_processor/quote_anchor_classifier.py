@@ -112,6 +112,7 @@ class QuoteAnchorClassifier:
         self.last_output_tokens = 0
         self.last_word_whisper_s = 0.0
         self.last_classify_s = 0.0
+        self.silence_gaps_override: list[tuple[float, float]] | None = None
 
     def classify(
         self,
@@ -246,6 +247,8 @@ class QuoteAnchorClassifier:
         return interpolate_words_from_segments(transcript_segments)
 
     def _silence_gaps(self, post: Post) -> list[tuple[float, float]]:
+        if self.silence_gaps_override is not None:
+            return list(self.silence_gaps_override)
         audio = post.unprocessed_audio_path
         if not audio or not Path(str(audio)).is_file():
             return []

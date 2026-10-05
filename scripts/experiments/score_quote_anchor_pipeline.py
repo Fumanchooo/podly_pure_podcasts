@@ -162,6 +162,9 @@ def main() -> int:
                 words_cache=WORDS / f"{show_id}.json",
                 llm_cache_dir=LLM_CACHE,
                 skip_audio_clip=True,
+                silence_gaps=[
+                    (g.start, g.end) for g in load_silence_gaps(show_id, audio, SILENCE)
+                ],
             )
             walls[show_id] = time.time() - started
             production[show_id] = payload
