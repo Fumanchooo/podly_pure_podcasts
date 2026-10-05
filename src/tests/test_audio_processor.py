@@ -167,6 +167,33 @@ def test_merge_does_not_fill_long_content_hole(
     assert merged[1] == (73000, 99000)
 
 
+def test_snap_merged_segments_noops_without_audio(
+    test_processor_with_mocks: AudioProcessor,
+) -> None:
+    merged = [(1000, 8000)]
+    assert (
+        test_processor_with_mocks.snap_merged_segments(merged, "missing.mp3") == merged
+    )
+    test_processor_with_mocks.config.enable_dsp_boundary_snap = False
+    assert (
+        test_processor_with_mocks.snap_merged_segments(merged, "missing.mp3") == merged
+    )
+
+
+def test_snap_merged_segments_uses_refine_cuts(
+    test_processor_with_mocks: AudioProcessor,
+) -> None:
+    with patch(
+        "podcast_processor.audio_processor.refine_cuts",
+        return_value=[(1.2, 7.8)],
+    ) as mocked:
+        out = test_processor_with_mocks.snap_merged_segments(
+            [(1000, 8000)], "/tmp/does-not-need-to-exist.mp3"
+        )
+    assert out == [(1200, 7800)]
+    mocked.assert_called_once()
+
+
 def test_process_audio(
     app: Flask,
     test_config: Config,
@@ -194,6 +221,16 @@ def test_process_audio(
 
         output_path = "path/to/output.mp3"
 
+        def persist_post(_model: str, post_id: int, fields: dict, wait: bool = True) -> MagicMock:
+            row = db.session.get(Post, post_id)
+            assert row is not None
+            for key, value in fields.items():
+                setattr(row, key, value)
+            db.session.commit()
+            result = MagicMock()
+            result.success = True
+            return result
+
         # Set up mocks for get_ad_segments and get_audio_duration_ms
         with (
             patch.object(processor, "get_ad_segments", return_value=[(5.0, 10.0)]),
@@ -204,6 +241,10 @@ def test_process_audio(
             patch(
                 "podcast_processor.audio_processor.clip_segments_with_fade"
             ) as mock_clip,
+            patch(
+                "podcast_processor.audio_processor.writer_client.update",
+                side_effect=persist_post,
+            ),
         ):
             # Call the method
             removed_segments = processor.process_audio(post, output_path)

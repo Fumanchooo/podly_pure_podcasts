@@ -49,10 +49,30 @@ Other labels copied unchanged. $0.0027 Gemini.
 
 ## Verdict
 
-**Folded on this branch** (not deployed to live `podly.service`). Inner-span
-opening 7/7; not_ad FP back to Friday’s 2.7s; inner is_ad 96.2%. Candidate
-90s-window ≥50% remains a poor fit when gold windows include show open.
+**Folded on this branch** (live `podly.service` switched to this commit on Cake;
+see `docs/experiments/auto_gold/CAKE_DEPLOY.md`). Inner-span opening 7/7; not_ad
+FP back to Friday’s 2.7s; inner is_ad 96.2%. Candidate 90s-window ≥50% remains a
+poor fit when gold windows include show open.
 
-## Claim
+## Cut-boundary precision (2026-10-05 afternoon)
 
-`general_podcast_ads` remains **LOCKED** (silver Gemini judge votes only; no human spot-check).
+Same 10 episodes, $0 replay. Inner-span catch / opening 7/7 / not_ad 2.7s held.
+
+Imprecision is mostly **Whisper segment edges** (~3–6s), not eval-harness
+`pad_seconds`. Production does not pad scout windows. `expand_neighbors` can
+add neighbors within 10s when LLM boundary refinement is on. Merge hole-fill is
+capped at 12s. `fade_ms` only fades kept content and does not change cut times.
+End-extend-to-EOF still exists but is outside the gold candidate window so it
+does not show up in window-local overcut.
+
+Eval: interpolated word extents were a no-op on segment-aligned cuts. Nearest
+ffmpeg silencedetect snap **±2.0s** was the smallest win. Inward-only and
+±2.5s lost inner-span catch.
+
+| | start med/p90 | end med/p90 | overcut s | undercut s | inner-span | opening inner | not_ad cut s | spend |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before | 0.00 / 1.06 | 0.07 / 3.60 | 10.5 | 18.0 | 96.2% | 7/7 | 2.7 | $0 |
+| after ±2.0s snap | 0.00 / 1.09 | 0.07 / 3.60 | 9.8 | 16.6 | 96.5% | 7/7 | 2.7 | $0 |
+
+Folded `enable_dsp_boundary_snap` default **true**. Scout confirm stays false.
+`general_podcast_ads` remains **LOCKED**.

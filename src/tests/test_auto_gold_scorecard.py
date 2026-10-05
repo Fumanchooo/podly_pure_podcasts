@@ -14,6 +14,7 @@ from podcast_processor.experiments.auto_gold.downloader import (
 from podcast_processor.experiments.auto_gold.scorecard import (
     CLAIM_LOCKED,
     covered_seconds,
+    percentile,
     render_scorecard_md,
     score_windows,
 )
@@ -107,6 +108,65 @@ def test_seconds_recall_and_opening_fn() -> None:
     assert isinstance(empty, float)
     overlapping = covered_seconds(0.0, 100.0, [(0.0, 50.0), (40.0, 70.0)])
     assert overlapping == 70.0
+
+
+def test_inner_span_boundary_precision() -> None:
+    rows = [
+        {
+            "show_id": "s1",
+            "start": 0.0,
+            "end": 90.0,
+            "is_ad": True,
+            "sources": ["preroll_always"],
+            "ad_spans": [{"start": 0.0, "end": 40.0}],
+        },
+        {
+            "show_id": "s1",
+            "start": 200.0,
+            "end": 230.0,
+            "is_ad": True,
+            "sources": ["dai_probe"],
+            "ad_spans": [{"start": 205.0, "end": 220.0}],
+        },
+    ]
+    # First window: cut 0-42 overcuts 2s of show inside the 90s window, no undercut.
+    # Second: cut 206-219 undercuts 1s each side, no overcut inside window.
+    result = score_windows(rows, {"s1": [(0.0, 42.0), (206.0, 219.0)]})
+    t = result.totals
+    assert round(t.overcut_seconds, 5) == 2.0
+    assert round(t.undercut_seconds, 5) == 2.0
+    assert t.n_boundary_spans == 2
+    assert result.start_errors == [0.0, 1.0]
+    assert result.end_errors == [2.0, 1.0]
+    assert t.start_error_median == 0.5
+    assert t.end_error_median == 1.5
+    assert percentile([0.0, 1.0], 0.9) == 0.9
+    md = render_scorecard_md(result)
+    assert "overcut seconds" in md
+    assert "undercut seconds" in md
+    assert "start-boundary error median / p90" in md
+
+
+def test_contiguous_inner_spans_merge_for_boundary_errors() -> None:
+    rows = [
+        {
+            "show_id": "s1",
+            "start": 1270.0,
+            "end": 1304.0,
+            "is_ad": True,
+            "sources": ["dai_probe"],
+            "ad_spans": [
+                {"start": 1270.0, "end": 1288.2},
+                {"start": 1288.2, "end": 1304.0},
+            ],
+        }
+    ]
+    result = score_windows(rows, {"s1": [(1270.0, 1304.0)]})
+    assert result.totals.overcut_seconds == 0.0
+    assert result.totals.undercut_seconds == 0.0
+    assert result.start_errors == [0.0]
+    assert result.end_errors == [0.0]
+    assert result.totals.n_boundary_spans == 1
 
 
 def test_opening_seconds_clip_to_preroll() -> None:

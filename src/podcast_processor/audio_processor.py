@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Any
 
 from app.extensions import db
@@ -6,6 +7,7 @@ from app.models import Identification, ModelCall, Post, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_merger import AdMerger
 from podcast_processor.audio import clip_segments_with_fade, get_audio_duration_ms
+from podcast_processor.boundary_snap import refine_cuts
 from shared import defaults as DEFAULTS
 from shared.config import Config
 
@@ -327,6 +329,22 @@ class AudioProcessor:
             return [*ad_segments[:-1], (ad_segments[-1][0], audio_duration_seconds)]
         return ad_segments
 
+    def snap_merged_segments(
+        self,
+        merged_ad_segments_ms: list[tuple[int, int]],
+        audio_path: str | None,
+    ) -> list[tuple[int, int]]:
+        """Snap merged cut edges to nearby silence. No-op if disabled or no audio."""
+        if not merged_ad_segments_ms:
+            return merged_ad_segments_ms
+        if not getattr(self.config, "enable_dsp_boundary_snap", True):
+            return merged_ad_segments_ms
+        if not audio_path:
+            return merged_ad_segments_ms
+        cuts_s = [(start / 1000.0, end / 1000.0) for start, end in merged_ad_segments_ms]
+        snapped = refine_cuts(cuts_s, audio_path=Path(audio_path))
+        return [(int(start * 1000), int(end * 1000)) for start, end in snapped]
+
     def process_audio(self, post: Post, output_path: str) -> list[tuple[int, int]]:
         """
         Process the podcast audio by removing ad segments.
@@ -354,6 +372,9 @@ class AudioProcessor:
             min_ad_segment_separation_seconds=float(
                 self.config.output.min_ad_segement_separation_seconds
             ),
+        )
+        merged_ad_segments = self.snap_merged_segments(
+            merged_ad_segments, post.unprocessed_audio_path
         )
 
         # LLM strategy doesn't use chapter markers, so VBR is fine for smaller files

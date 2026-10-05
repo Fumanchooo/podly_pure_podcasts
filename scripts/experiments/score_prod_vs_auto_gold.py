@@ -20,6 +20,7 @@ from podcast_processor.experiments.prod_vs_auto_gold import (
     CAKE_ENV_LOCAL,
     CachedLocalWhisper,
     SpendTracker,
+    apply_boundary_snap_to_production,
     build_scorecard,
     download_pinned_episodes,
     force_local_writer,
@@ -86,6 +87,29 @@ def main() -> int:
         type=Path,
         default=None,
         help="Optional extra SCORECARD.md path. Default: docs/.../SCORECARD.md unless --replay-from.",
+    )
+    parser.add_argument(
+        "--boundary-snap",
+        action="store_true",
+        help="Eval-only: snap cut edges with word extents + ffmpeg silencedetect ($0).",
+    )
+    parser.add_argument(
+        "--boundary-snap-radius",
+        type=float,
+        default=2.0,
+        help="Silence-search radius in seconds around each cut edge.",
+    )
+    parser.add_argument(
+        "--boundary-snap-prefer",
+        choices=("nearest", "inward"),
+        default="nearest",
+        help="nearest silence, or only shrink cuts (inward).",
+    )
+    parser.add_argument(
+        "--audio-dir",
+        type=Path,
+        default=None,
+        help="Dir with downloads.json + transcripts/ + audio/ for --boundary-snap.",
     )
     args = parser.parse_args()
 
@@ -246,6 +270,22 @@ def main() -> int:
             "re-judged; other labels frozen."
         )
 
+    if args.boundary_snap:
+        audio_dir = args.audio_dir
+        if audio_dir is None:
+            audio_dir = args.replay_from or output_dir
+        production = apply_boundary_snap_to_production(
+            production,
+            repo_root=repo_root,
+            audio_dir=audio_dir,
+            radius=float(args.boundary_snap_radius),
+            prefer=str(args.boundary_snap_prefer),
+        )
+        notes.append(
+            f"Eval-only DSP/word boundary snap ±{args.boundary_snap_radius:.1f}s "
+            "($0 Gemini). Production flag enable_bow_scout_gemini_confirm stays false."
+        )
+
     result = build_scorecard(
         labeled, production, spend_usd=tracker.usd, notes=notes
     )
@@ -282,8 +322,17 @@ def main() -> int:
                 "t0_span_window_recall": t.t0_span_window_recall(),
                 "not_ad_seconds_cut": t.not_ad_seconds_cut,
                 "not_ad_seconds": t.not_ad_seconds,
+                "start_error_median": t.start_error_median,
+                "start_error_p90": t.start_error_p90,
+                "end_error_median": t.end_error_median,
+                "end_error_p90": t.end_error_p90,
+                "overcut_seconds": t.overcut_seconds,
+                "undercut_seconds": t.undercut_seconds,
+                "boundary_error_total": t.overcut_seconds + t.undercut_seconds,
+                "n_boundary_spans": t.n_boundary_spans,
                 "replay_from": str(args.replay_from) if args.replay_from else None,
                 "rejudge_self_promo_not_ad": args.rejudge_self_promo_not_ad,
+                "boundary_snap": args.boundary_snap,
             },
             indent=2,
         )

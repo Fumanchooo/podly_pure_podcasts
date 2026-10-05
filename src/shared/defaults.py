@@ -15,6 +15,8 @@ LLM_MAX_INPUT_TOKENS_PER_MINUTE: int | None = None
 ENABLE_BOUNDARY_REFINEMENT = True
 ENABLE_WORD_LEVEL_BOUNDARY_REFINDER = False
 ENABLE_LLM_CHAPTER_FALLBACK_TAGGING = False
+# $0 ffmpeg silencedetect snap of cut edges. Folded 2026-10-05 (±2.0s nearest).
+ENABLE_DSP_BOUNDARY_SNAP = True
 # Experimental CueDetector-scout + Gemini-confirm classifier. Default off:
 # production stays on the full AdClassifier LLM walk until this is explicitly
 # enabled *and* the experimental path is wired. See docs/experiments/AGENT_EVAL.md.

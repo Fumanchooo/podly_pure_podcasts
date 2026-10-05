@@ -147,6 +147,7 @@ def production_config() -> Config:
         llm_model=os.environ.get("LLM_MODEL") or DEFAULT_GEMINI_MODEL,
         enable_bow_scout_gemini_confirm=False,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
+        enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
         output=OutputConfig(
             fade_ms=DEFAULTS.OUTPUT_FADE_MS,
@@ -486,6 +487,7 @@ def run_production_cut(
                 config.output.min_ad_segment_separation_seconds
             ),
         )
+        merged_ms = processor.snap_merged_segments(merged_ms, str(audio_path))
         if merged_ms:
             clip_segments_with_fade(
                 ad_segments_ms=merged_ms,
@@ -520,6 +522,62 @@ def load_production_cache(output_dir: Path) -> dict[str, dict[str, Any]]:
         row = _read_json(path)
         cached[str(row.get("show_id") or path.stem)] = row
     return cached
+
+
+def apply_boundary_snap_to_production(
+    production: dict[str, dict[str, Any]],
+    *,
+    repo_root: Path,
+    audio_dir: Path,
+    radius: float,
+    prefer: str = "nearest",
+) -> dict[str, dict[str, Any]]:
+    """Eval-only: snap cached cuts using transcripts + ffmpeg silencedetect ($0)."""
+    from podcast_processor.boundary_snap import detect_silence_gaps, refine_cuts
+
+    downloads_path = audio_dir / "downloads.json"
+    downloads: dict[str, Any] = {}
+    if downloads_path.is_file():
+        downloads = json.loads(downloads_path.read_text(encoding="utf-8"))
+    transcripts_dir = audio_dir / "transcripts"
+    refined: dict[str, dict[str, Any]] = {}
+    for show_id, row in production.items():
+        payload = dict(row)
+        cuts = [(float(a), float(b)) for a, b in (row.get("cut_segments_s") or [])]
+        audio_raw = (downloads.get(show_id) or {}).get("audio_path")
+        audio_path: Path | None = Path(str(audio_raw)) if audio_raw else None
+        if audio_path is not None and not audio_path.is_absolute():
+            audio_path = repo_root / audio_path
+        segments: list[tuple[float, float, str]] = []
+        transcript_path = transcripts_dir / f"{show_id}.json"
+        if transcript_path.is_file():
+            for seg in json.loads(transcript_path.read_text(encoding="utf-8")):
+                segments.append(
+                    (
+                        float(seg["start"]),
+                        float(seg["end"]),
+                        str(seg.get("text") or ""),
+                    )
+                )
+        snapped = refine_cuts(
+            cuts,
+            audio_path=audio_path,
+            segments=segments or None,
+            radius=radius,
+            prefer=prefer,  # type: ignore[arg-type]
+            gaps=(
+                detect_silence_gaps(audio_path)
+                if audio_path is not None and audio_path.is_file()
+                else None
+            ),
+        )
+        payload["cut_segments_s_unsnapped"] = [[a, b] for a, b in cuts]
+        payload["cut_segments_s"] = [[a, b] for a, b in snapped]
+        payload["boundary_snap"] = True
+        payload["boundary_snap_radius"] = radius
+        payload["boundary_snap_prefer"] = prefer
+        refined[show_id] = payload
+    return refined
 
 
 def seed_spend_from_production(
@@ -677,6 +735,22 @@ def replay_production_from_cached_llm(
                     config.output.min_ad_segment_separation_seconds
                 ),
             )
+            snap_audio = post.unprocessed_audio_path
+            if not snap_audio or not Path(str(snap_audio)).is_file():
+                downloads_path = source_dir / "downloads.json"
+                if downloads_path.is_file():
+                    raw = (
+                        json.loads(downloads_path.read_text(encoding="utf-8"))
+                        .get(show_id, {})
+                        .get("audio_path")
+                    )
+                    if raw:
+                        candidate = Path(str(raw))
+                        if not candidate.is_absolute():
+                            candidate = Path(__file__).resolve().parents[3] / candidate
+                        if candidate.is_file():
+                            snap_audio = str(candidate)
+            merged_ms = processor.snap_merged_segments(merged_ms, snap_audio)
             payload = {
                 "show_id": show_id,
                 "n_transcript_segments": len(segments),

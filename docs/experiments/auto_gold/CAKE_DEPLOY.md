@@ -1,0 +1,97 @@
+# Cake live Podly deploy (`podly.service`)
+
+Live checkout is `/home/jdr/cursor/repos/podly_pure_podcasts` (systemd
+`WorkingDirectory`). The experiment branch `cursor/opening-fn-2026-10-05` is
+checked out in the scorecard worktree `/home/jdr/cursor/repos/podly_scorecard`,
+so the live dir uses a detached commit (git refuses the same branch in two
+worktrees).
+
+`enable_bow_scout_gemini_confirm` stays **false** (code default; not in
+`.env.local`). Do not set it.
+
+## Recorded rollback identity (2026-10-05 09:15 PT)
+
+| item | value |
+| --- | --- |
+| live checkout | `/home/jdr/cursor/repos/podly_pure_podcasts` |
+| live branch before deploy | `main` |
+| live commit before deploy | `0b8160ac7770593d3c99f3c7e525e5882859be4e` |
+| experiment | `cursor/opening-fn-2026-10-05` `@` `5f9dc22deead4cce79370ea821cb6175d9057d65` |
+| instance dir | `/home/jdr/cursor/repos/podly_pure_podcasts/src/instance` |
+| timestamped backup | `/home/jdr/cursor/tmp/podly_deploy_backup_20261005_091522` |
+
+Backup contains `instance/sqlite3.db` (Python `sqlite3.backup`, consistent),
+`instance/jobs.sqlite`, `config/config.yml`, `.env.local`. Do not print those
+files.
+
+## Rollback (exact)
+
+Restore the pre-experiment commit and restart both units. Instance DB/config
+are gitignored and stay put unless you also restore the backup.
+
+```bash
+LIVE=/home/jdr/cursor/repos/podly_pure_podcasts
+BACKUP=/home/jdr/cursor/tmp/podly_deploy_backup_20261005_091522
+PREV=0b8160ac7770593d3c99f3c7e525e5882859be4e
+
+systemctl --user stop podly.service
+git -C "$LIVE" checkout --detach "$PREV"
+systemctl --user restart podly-writer.service
+sleep 3
+systemctl --user start podly.service
+systemctl --user is-active podly.service podly-writer.service
+curl -sf -o /dev/null http://127.0.0.1:5001/ && echo web_ok
+```
+
+Equivalent if no other worktree holds `main`: `git -C "$LIVE" checkout main`
+(that was `0b8160a` at deploy time).
+
+Restore DB/config only if the experiment migrated or mutated them:
+
+```bash
+LIVE=/home/jdr/cursor/repos/podly_pure_podcasts
+BACKUP=/home/jdr/cursor/tmp/podly_deploy_backup_20261005_091522
+
+systemctl --user stop podly.service podly-writer.service
+cp -a "$BACKUP/instance/sqlite3.db" "$LIVE/src/instance/sqlite3.db"
+rm -f "$LIVE/src/instance/sqlite3.db-wal" "$LIVE/src/instance/sqlite3.db-shm"
+cp -a "$BACKUP/instance/jobs.sqlite" "$LIVE/src/instance/jobs.sqlite"
+cp -a "$BACKUP/config/config.yml" "$LIVE/config/config.yml"
+cp -a "$BACKUP/.env.local" "$LIVE/.env.local"
+systemctl --user start podly-writer.service
+sleep 3
+systemctl --user start podly.service
+```
+
+## Forward deploy (detached experiment commit)
+
+```bash
+LIVE=/home/jdr/cursor/repos/podly_pure_podcasts
+EXP=5f9dc22deead4cce79370ea821cb6175d9057d65
+
+# Do not `uv sync` the live `.venv` (it tries to pull CUDA torch). Lock was
+# identical; flask-migrate runs on writer start (`upgrade(revision="heads")`).
+systemctl --user stop podly.service
+git -C "$LIVE" fetch --all --tags  # optional; commit is already local
+git -C "$LIVE" checkout --detach "$EXP"
+systemctl --user restart podly-writer.service
+sleep 3
+systemctl --user start podly.service
+```
+
+After a later commit on `cursor/opening-fn-2026-10-05`, replace `$EXP` with
+that SHA (still detach; do not check the branch out in `$LIVE` while the
+scorecard worktree holds it).
+
+## Health check
+
+```bash
+systemctl --user is-active podly.service podly-writer.service
+curl -sf -o /dev/null http://127.0.0.1:5001/ && echo local_ui_ok
+curl -sf http://127.0.0.1:5001/feeds | python3 -c "import json,sys; titles=[f['title'] for f in json.load(sys.stdin)]; print(titles)"
+curl -sf -o /dev/null http://podly.jdrbc.ca:5001/ && echo pub_ok
+journalctl --user -u podly.service -u podly-writer.service --since "2 min ago" --no-pager
+```
+
+Expected feeds: Patrick Boyle On Finance, Prof G Markets, Planet Money, The
+Indicator from Planet Money. Scout flag must stay false.

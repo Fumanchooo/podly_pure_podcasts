@@ -19,6 +19,8 @@ def test_bow_scout_flag_defaults_off() -> None:
     config = create_standard_test_config()
     assert config.enable_bow_scout_gemini_confirm is False
     assert bow_scout_gemini_confirm_enabled(config) is False
+    assert DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP is True
+    assert config.enable_dsp_boundary_snap is True
 
 
 def test_config_flag_can_be_enabled_without_swapping_defaults() -> None:
