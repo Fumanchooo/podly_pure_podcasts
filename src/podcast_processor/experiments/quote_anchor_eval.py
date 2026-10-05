@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -48,13 +47,14 @@ from podcast_processor.experiments.word_transcripts import (
     words_from_payload,
 )
 from podcast_processor.quote_anchor import (
-    QuoteAd,
     QuoteMatch,
     SegmentSpan,
     WordTiming,
     cuts_from_matches,
     hybrid_cuts_from_matches,
+    keep_ad,
     match_rate,
+    parse_quote_ads,
     resolve_ads,
     word_index_range,
 )
@@ -144,59 +144,6 @@ def baseline_tokens_from_sqlite(sqlite_path: Path) -> TokenTotals:
     totals.n_episodes = len(per_show)
     con.close()
     return totals
-
-
-def parse_quote_ads(raw: str) -> list[QuoteAd]:
-    text = raw.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    start = text.find("{")
-    end = text.rfind("}")
-    if start < 0 or end < start:
-        return []
-    blob = text[start : end + 1]
-    payload: Any
-    try:
-        payload = json.loads(blob)
-    except json.JSONDecodeError:
-        try:
-            payload = json.loads(blob.replace("'", '"'))
-        except json.JSONDecodeError:
-            return []
-    rows = payload.get("ads") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
-        return []
-    ads: list[QuoteAd] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        start_q = str(row.get("start_quote") or "").strip()
-        end_q = str(row.get("end_quote") or start_q).strip()
-        if not start_q:
-            continue
-        try:
-            confidence = float(row.get("confidence") or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
-        ads.append(
-            QuoteAd(
-                start_quote=start_q,
-                end_quote=end_q or start_q,
-                content_type=str(row.get("content_type") or "promotional_external"),
-                confidence=confidence,
-            )
-        )
-    return ads
-
-
-def keep_ad(ad: QuoteAd) -> bool:
-    conf = ad.confidence
-    if ad.content_type == "technical_discussion":
-        conf = max(0.0, conf - 0.25)
-    elif ad.content_type == "transition":
-        conf = max(0.0, conf - 0.1)
-    return conf >= MIN_CONFIDENCE
 
 
 def _prompt_hash(system: str, user: str) -> str:
@@ -407,7 +354,7 @@ def quote_cuts_for_show(
             model=model,
             system_prompt=system_prompt,
         )
-        ads = [ad for ad in parse_quote_ads(raw) if keep_ad(ad)]
+        ads = [ad for ad in parse_quote_ads(raw) if keep_ad(ad, MIN_CONFIDENCE)]
         w0, w1 = word_index_range(words, max(0.0, chunk_start - 1.0), chunk_end + 1.0)
         matches.extend(
             resolve_ads(

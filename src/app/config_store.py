@@ -533,6 +533,13 @@ def to_pydantic_config() -> PydanticConfig:
                 DEFAULTS.ENABLE_LLM_CHAPTER_FALLBACK_TAGGING,
             )
         ),
+        enable_quote_anchor_boundaries=bool(
+            DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES
+        ),
+        enable_bow_scout_gemini_confirm=bool(
+            DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM
+        ),
+        enable_dsp_boundary_snap=bool(DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP),
         output=data["output"],
         processing=data["processing"],
         background_update_interval_minute=data["app"].get(
@@ -667,6 +674,13 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     )
     if env_llm_max_input_per_min is not None:
         cfg.llm_max_input_tokens_per_minute = env_llm_max_input_per_min
+
+    env_quote_anchor = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_ANCHOR_BOUNDARIES"),
+        env_name="ENABLE_QUOTE_ANCHOR_BOUNDARIES",
+    )
+    if env_quote_anchor is not None:
+        cfg.enable_quote_anchor_boundaries = env_quote_anchor
 
 
 def _apply_remote_whisper_runtime_overrides(whisper: RemoteWhisperConfig) -> None:

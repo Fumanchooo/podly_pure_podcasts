@@ -21,6 +21,9 @@ ENABLE_DSP_BOUNDARY_SNAP = True
 # production stays on the full AdClassifier LLM walk until this is explicitly
 # enabled *and* the experimental path is wired. See docs/experiments/AGENT_EVAL.md.
 ENABLE_BOW_SCOUT_GEMINI_CONFIRM = False
+# Quote-anchor cutter (prompt_v2 + lexical_v2). Default off until the
+# original-10 + holdout gates pass; live deploy flips this True.
+ENABLE_QUOTE_ANCHOR_BOUNDARIES = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

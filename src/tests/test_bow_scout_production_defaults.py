@@ -8,6 +8,7 @@ from podcast_processor.cue_detector import CORE_ANALYZE_KEYS, CueDetector
 from podcast_processor.podcast_processor import (
     PodcastProcessor,
     bow_scout_gemini_confirm_enabled,
+    quote_anchor_boundaries_enabled,
 )
 from shared import defaults as DEFAULTS
 from shared.config import Config
@@ -21,6 +22,9 @@ def test_bow_scout_flag_defaults_off() -> None:
     assert bow_scout_gemini_confirm_enabled(config) is False
     assert DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP is True
     assert config.enable_dsp_boundary_snap is True
+    assert DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES is False
+    assert config.enable_quote_anchor_boundaries is False
+    assert quote_anchor_boundaries_enabled(config) is False
 
 
 def test_config_flag_can_be_enabled_without_swapping_defaults() -> None:

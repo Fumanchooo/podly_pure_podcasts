@@ -6,6 +6,7 @@ Scout confirm stays off. Self-promo counts as an ad (policy 2026-10-05).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 MATCH_THRESHOLD = 0.72
 MIN_QUOTE_TOKENS = 3
+QUOTE_ANCHOR_SOURCE = "quote_anchor"
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -356,6 +358,59 @@ def word_index_range(
 
 def cuts_from_matches(matches: list[QuoteMatch]) -> list[tuple[float, float]]:
     return [(item.start, item.end) for item in matches if item.end > item.start]
+
+
+def parse_quote_ads(raw: str) -> list[QuoteAd]:
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < start:
+        return []
+    blob = text[start : end + 1]
+    payload: object
+    try:
+        payload = json.loads(blob)
+    except json.JSONDecodeError:
+        try:
+            payload = json.loads(blob.replace("'", '"'))
+        except json.JSONDecodeError:
+            return []
+    rows = payload.get("ads") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    ads: list[QuoteAd] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        start_q = str(row.get("start_quote") or "").strip()
+        end_q = str(row.get("end_quote") or start_q).strip()
+        if not start_q:
+            continue
+        try:
+            confidence = float(row.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        ads.append(
+            QuoteAd(
+                start_quote=start_q,
+                end_quote=end_q or start_q,
+                content_type=str(row.get("content_type") or "promotional_external"),
+                confidence=confidence,
+            )
+        )
+    return ads
+
+
+def keep_ad(ad: QuoteAd, min_confidence: float) -> bool:
+    conf = ad.confidence
+    if ad.content_type == "technical_discussion":
+        conf = max(0.0, conf - 0.25)
+    elif ad.content_type == "transition":
+        conf = max(0.0, conf - 0.1)
+    return conf >= min_confidence
 
 
 def expand_outward_to_silence(

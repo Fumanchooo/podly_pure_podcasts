@@ -42,6 +42,61 @@ def save_word_cache(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def payload_from_whisper_result(
+    result: dict[str, Any],
+    *,
+    model_name: str,
+    audio_path: Path | str,
+) -> dict[str, Any]:
+    words_out: list[dict[str, Any]] = []
+    segments_out: list[dict[str, Any]] = []
+    for seg in result.get("segments") or []:
+        seg_words = []
+        for item in seg.get("words") or []:
+            token = str(item.get("word") or "").strip()
+            if not token:
+                continue
+            row = {
+                "word": token,
+                "start": float(
+                    item.get("start")
+                    if item.get("start") is not None
+                    else seg.get("start") or 0.0
+                ),
+                "end": float(
+                    item.get("end")
+                    if item.get("end") is not None
+                    else seg.get("end") or 0.0
+                ),
+            }
+            seg_words.append(row)
+            words_out.append(row)
+        segments_out.append(
+            {
+                "start": float(seg.get("start") or 0.0),
+                "end": float(seg.get("end") or 0.0),
+                "text": str(seg.get("text") or ""),
+                "words": seg_words,
+            }
+        )
+        if not seg_words:
+            for span in interpolate_word_times(
+                float(seg.get("start") or 0.0),
+                float(seg.get("end") or 0.0),
+                str(seg.get("text") or ""),
+            ):
+                words_out.append(
+                    {"word": span.word, "start": span.start, "end": span.end}
+                )
+    return {
+        "model": model_name,
+        "word_timestamps": True,
+        "audio_path": str(audio_path),
+        "words": words_out,
+        "segments": segments_out,
+    }
+
+
 def segments_from_payload(payload: dict[str, Any]) -> list[tuple[float, float, str]]:
     rows: list[tuple[float, float, str]] = []
     for seg in payload.get("segments") or []:
@@ -90,44 +145,8 @@ def transcribe_word_timestamps(
         language=language,
         word_timestamps=True,
     )
-    words_out: list[dict[str, Any]] = []
-    segments_out: list[dict[str, Any]] = []
-    for seg in result.get("segments") or []:
-        seg_words = []
-        for item in seg.get("words") or []:
-            token = str(item.get("word") or "").strip()
-            if not token:
-                continue
-            row = {
-                "word": token,
-                "start": float(item.get("start") if item.get("start") is not None else seg.get("start") or 0.0),
-                "end": float(item.get("end") if item.get("end") is not None else seg.get("end") or 0.0),
-            }
-            seg_words.append(row)
-            words_out.append(row)
-        segments_out.append(
-            {
-                "start": float(seg.get("start") or 0.0),
-                "end": float(seg.get("end") or 0.0),
-                "text": str(seg.get("text") or ""),
-                "words": seg_words,
-            }
-        )
-        if not seg_words:
-            for span in interpolate_word_times(
-                float(seg.get("start") or 0.0),
-                float(seg.get("end") or 0.0),
-                str(seg.get("text") or ""),
-            ):
-                words_out.append(
-                    {"word": span.word, "start": span.start, "end": span.end}
-                )
-    payload = {
-        "model": model_name,
-        "word_timestamps": True,
-        "audio_path": str(audio_path),
-        "words": words_out,
-        "segments": segments_out,
-    }
+    payload = payload_from_whisper_result(
+        result, model_name=model_name, audio_path=audio_path
+    )
     save_word_cache(cache_path, payload)
     return words_from_payload(payload)

@@ -56,7 +56,15 @@ class TranscriptionManager:
         if isinstance(self.config.whisper, RemoteWhisperConfig):
             return OpenAIWhisperTranscriber(self.logger, self.config.whisper)
         if isinstance(self.config.whisper, LocalWhisperConfig):
-            return LocalWhisperTranscriber(self.logger, self.config.whisper.model)
+            from podcast_processor.quote_anchor_classifier import (
+                quote_anchor_boundaries_enabled,
+            )
+
+            return LocalWhisperTranscriber(
+                self.logger,
+                self.config.whisper.model,
+                word_timestamps=quote_anchor_boundaries_enabled(self.config),
+            )
         if isinstance(self.config.whisper, GroqWhisperConfig):
             return GroqWhisperTranscriber(self.logger, self.config.whisper)
         raise ValueError(f"unhandled whisper config {self.config.whisper}")

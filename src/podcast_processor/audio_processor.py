@@ -8,6 +8,8 @@ from app.writer.client import writer_client
 from podcast_processor.ad_merger import AdMerger
 from podcast_processor.audio import clip_segments_with_fade, get_audio_duration_ms
 from podcast_processor.boundary_snap import refine_cuts
+from podcast_processor.quote_anchor import QUOTE_ANCHOR_SOURCE
+from podcast_processor.quote_anchor_classifier import quote_anchor_boundaries_enabled
 from shared import defaults as DEFAULTS
 from shared.config import Config
 
@@ -49,6 +51,16 @@ class AudioProcessor:
             A list of tuples containing start and end times (in seconds) of ad segments
         """
         self.logger.info(f"Retrieving ad segments from database for post {post.id}.")
+
+        if quote_anchor_boundaries_enabled(self.config):
+            quote_cuts = self._quote_anchor_cuts(post)
+            if quote_cuts is not None:
+                self.logger.info(
+                    "Using quote-anchor cuts for post %s n=%s",
+                    post.id,
+                    len(quote_cuts),
+                )
+                return quote_cuts
 
         query = (
             self.identification_query
@@ -126,6 +138,41 @@ class AudioProcessor:
         ad_segments_times = [(g.start_time, g.end_time) for g in ad_groups]
         ad_segments_times.sort(key=lambda x: x[0])
         return ad_segments_times
+
+    def _quote_anchor_cuts(self, post: Post) -> list[tuple[float, float]] | None:
+        """Return stored quote-anchor windows, or None if this post is not quote-classified."""
+        post_row = self._safe_get_post_row(post)
+        refined = getattr(post_row, "refined_ad_boundaries", None) if post_row else None
+        if not isinstance(refined, list):
+            refined = getattr(post, "refined_ad_boundaries", None)
+        if not isinstance(refined, list):
+            return None
+        if not any(
+            isinstance(item, dict) and item.get("source") == QUOTE_ANCHOR_SOURCE
+            for item in refined
+        ):
+            return None
+        cuts: list[tuple[float, float]] = []
+        for item in refined:
+            if not isinstance(item, dict):
+                continue
+            if item.get("source") != QUOTE_ANCHOR_SOURCE:
+                continue
+            if item.get("empty"):
+                continue
+            start_raw = item.get("refined_start", item.get("start"))
+            end_raw = item.get("refined_end", item.get("end"))
+            if start_raw is None or end_raw is None:
+                continue
+            try:
+                start = float(start_raw)
+                end = float(end_raw)
+            except (TypeError, ValueError):
+                continue
+            if end > start:
+                cuts.append((start, end))
+        cuts.sort(key=lambda span: span[0])
+        return cuts
 
     def _apply_refined_boundaries(self, post: Post, ad_groups: Any) -> None:
         post_row = self._safe_get_post_row(post)

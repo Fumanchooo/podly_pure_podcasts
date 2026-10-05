@@ -128,6 +128,15 @@ class Config(BaseModel):
             "explicitly enabled and the experimental classifier is wired."
         ),
     )
+    enable_quote_anchor_boundaries: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES,
+        description=(
+            "Quote-anchored ad cuts: local word-level Whisper, timestamp-free "
+            "prompt_v2, in-order fuzzy match, lexical_v2, then ±2s silence "
+            "snap. Fail-closed to segment-edge per unmatched quote. Scout "
+            "confirm stays off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

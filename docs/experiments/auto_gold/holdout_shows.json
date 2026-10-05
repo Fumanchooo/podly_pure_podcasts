@@ -1,0 +1,56 @@
+{
+  "gold_family": "general_podcast_ads",
+  "sampling_unit": "show",
+  "description": "Fresh-show holdout. Not in the scored 10. Do not retune constants on this set. Self-promo, network promos, and membership asks count as ads.",
+  "notes": [
+    "Holdout only. The locked 12-show catalog in shows.json is unchanged.",
+    "Mix: host-read, dynamic-insert, network promo / underwriting, membership ask."
+  ],
+  "shows": [
+    {
+      "id": "marketplace",
+      "title": "Marketplace",
+      "publisher": "APM / Marketplace",
+      "genre": "finance",
+      "ad_mechanism": "public_radio_underwriting",
+      "rss_url": "https://www.marketplace.org/feed/podcast/marketplace",
+      "notes": "Network/underwriting. Cataloged but not in the scored 10."
+    },
+    {
+      "id": "bill_simmons",
+      "title": "The Bill Simmons Podcast",
+      "publisher": "The Ringer / Spotify",
+      "genre": "sports",
+      "ad_mechanism": "dynamic_insertion_plus_host_reads",
+      "rss_url": "https://rss.art19.com/the-bill-simmons-podcast",
+      "notes": "DAI + host-reads. Cataloged but not in the scored 10."
+    },
+    {
+      "id": "npr_indicator",
+      "title": "The Indicator from Planet Money",
+      "publisher": "NPR",
+      "genre": "news",
+      "ad_mechanism": "npr_underwriting_and_membership",
+      "rss_url": "https://feeds.npr.org/510333/podcast.xml",
+      "notes": "Network promo + NPR Plus / donate membership ask."
+    },
+    {
+      "id": "this_american_life",
+      "title": "This American Life",
+      "publisher": "This American Life",
+      "genre": "narrative",
+      "ad_mechanism": "membership_ask_plus_dai",
+      "rss_url": "https://www.thisamericanlife.org/podcast/rss.xml",
+      "notes": "Membership/support ask plus dynamic insertion. Narrative/public-radio; not in the scored 10."
+    },
+    {
+      "id": "how_i_built_this",
+      "title": "How I Built This",
+      "publisher": "NPR / Wondery",
+      "genre": "tech",
+      "ad_mechanism": "host_read_midrolls",
+      "rss_url": "https://feeds.npr.org/510313/podcast.xml",
+      "notes": "Host-read sponsor midrolls (Wondery/NPR). Genre is interview/business; listed as tech for mix only."
+    }
+  ]
+}

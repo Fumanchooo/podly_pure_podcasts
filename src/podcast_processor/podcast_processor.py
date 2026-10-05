@@ -22,6 +22,10 @@ from podcast_processor.ad_detection_guard import (
 )
 from podcast_processor.audio import clip_segments_exact
 from podcast_processor.audio_processor import AudioProcessor
+from podcast_processor.quote_anchor_classifier import (
+    QuoteAnchorClassifier,
+    quote_anchor_boundaries_enabled,
+)
 from podcast_processor.chapter_ad_detector import (
     ChapterAdDetector,
     ChapterDetectionError,
@@ -118,6 +122,7 @@ class PodcastProcessor:
         logger: logging.Logger | None = None,
         transcription_manager: TranscriptionManager | None = None,
         ad_classifier: AdClassifier | None = None,
+        quote_anchor_classifier: QuoteAnchorClassifier | None = None,
         audio_processor: AudioProcessor | None = None,
         status_manager: ProcessingStatusManager | None = None,
         db_session: Any | None = None,
@@ -150,6 +155,13 @@ class PodcastProcessor:
             self.ad_classifier = AdClassifier(config)
         else:
             self.ad_classifier = ad_classifier
+
+        if quote_anchor_classifier is None:
+            self.quote_anchor_classifier = QuoteAnchorClassifier(
+                config, logger=self.logger, db_session=self.db_session
+            )
+        else:
+            self.quote_anchor_classifier = quote_anchor_classifier
 
         if audio_processor is None:
             self.audio_processor = AudioProcessor(config=config, logger=self.logger)
@@ -923,6 +935,15 @@ class PodcastProcessor:
         self.status_manager.update_job_status(
             job, "running", 3, "Identifying ads", 75.0
         )
+        if quote_anchor_boundaries_enabled(self.config):
+            self.logger.info(
+                "enable_quote_anchor_boundaries is on; using prompt_v2 + lexical_v2"
+            )
+            self.quote_anchor_classifier.classify(
+                transcript_segments=transcript_segments,
+                post=post,
+            )
+            return
         if bow_scout_gemini_confirm_enabled(self.config):
             self.logger.warning(
                 "enable_bow_scout_gemini_confirm is on, but the scout+confirm "

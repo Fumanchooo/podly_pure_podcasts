@@ -139,13 +139,14 @@ def assert_scout_off(config: Config) -> None:
         )
 
 
-def production_config() -> Config:
+def production_config(*, enable_quote_anchor_boundaries: bool = False) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
     config = Config(
         llm_api_key=llm_key,
         llm_model=os.environ.get("LLM_MODEL") or DEFAULT_GEMINI_MODEL,
         enable_bow_scout_gemini_confirm=False,
+        enable_quote_anchor_boundaries=enable_quote_anchor_boundaries,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
@@ -508,6 +509,148 @@ def run_production_cut(
         "duration_s": duration_ms / 1000.0,
         "spend_usd_after": tracker.usd,
         "scout_confirm": False,
+    }
+    _write_json(prod_path, payload)
+    return payload
+
+
+def run_quote_anchor_production_cut(
+    *,
+    show_id: str,
+    title: str,
+    audio_path: Path,
+    output_dir: Path,
+    config: Config,
+    app: Flask,
+    transcriber: LocalWhisperTranscriber,
+    tracker: SpendTracker,
+    words_cache: Path | None = None,
+    llm_cache_dir: Path | None = None,
+    complete_fn: Any | None = None,
+    skip_audio_clip: bool = True,
+) -> dict[str, Any]:
+    """Integrated quote-anchor classify + AudioProcessor merge/snap.
+
+    Does not call AdClassifier / neighbor expand / boundary refiner.
+    """
+    from podcast_processor.quote_anchor_classifier import QuoteAnchorClassifier
+
+    cache_path = output_dir / "transcripts" / f"{show_id}.json"
+    prod_path = output_dir / "production" / f"{show_id}.json"
+    segments = _load_or_transcribe(audio_path, cache_path, transcriber)
+    cut_path = output_dir / "cut" / f"{show_id}.mp3"
+    cut_path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.time()
+    with app.app_context():
+        guid = f"scorecard-qa:{show_id}"
+        post = db.session.query(Post).filter_by(guid=guid).one_or_none()
+        if post is None:
+            feed = Feed(
+                title=show_id,
+                rss_url=f"https://scorecard.local/qa/{show_id}.xml",
+                ad_detection_strategy="llm",
+            )
+            post = Post(
+                feed=feed,
+                guid=guid,
+                download_url=f"https://scorecard.local/qa/{show_id}.mp3",
+                title=title,
+                description=show_id,
+                unprocessed_audio_path=str(audio_path),
+                whitelisted=True,
+            )
+            db.session.add_all([feed, post])
+            db.session.commit()
+        post.unprocessed_audio_path = str(audio_path)
+        post.refined_ad_boundaries = None
+        db.session.commit()
+        existing_seg_ids = [
+            row[0]
+            for row in db.session.query(TranscriptSegment.id)
+            .filter_by(post_id=post.id)
+            .all()
+        ]
+        if existing_seg_ids:
+            db.session.query(Identification).filter(
+                Identification.transcript_segment_id.in_(existing_seg_ids)
+            ).delete(synchronize_session=False)
+        db.session.query(ModelCall).filter(ModelCall.post_id == post.id).delete()
+        db.session.query(TranscriptSegment).filter(
+            TranscriptSegment.post_id == post.id
+        ).delete()
+        db.session.commit()
+        db_segments = []
+        for idx, seg in enumerate(segments):
+            db_segments.append(
+                TranscriptSegment(
+                    post_id=post.id,
+                    sequence_num=idx,
+                    start_time=seg.start,
+                    end_time=seg.end,
+                    text=seg.text,
+                )
+            )
+        db.session.add_all(db_segments)
+        db.session.commit()
+
+        litellm.api_key = config.llm_api_key
+        classifier = QuoteAnchorClassifier(
+            config=config,
+            logger=logger,
+            db_session=db.session,
+            complete_fn=complete_fn,
+            word_cache_path=words_cache,
+            llm_cache_dir=llm_cache_dir,
+        )
+        classifier.classify(transcript_segments=db_segments, post=post)
+        processor = AudioProcessor(config=config, db_session=db.session)
+        ad_seconds = processor.get_ad_segments(post)
+        duration_ms = get_audio_duration_ms(str(audio_path)) or 0
+        merged_ms = processor.merge_ad_segments(
+            duration_ms=duration_ms,
+            ad_segments=ad_seconds,
+            min_ad_segment_length_seconds=float(
+                config.output.min_ad_segment_length_seconds
+            ),
+            min_ad_segment_separation_seconds=float(
+                config.output.min_ad_segment_separation_seconds
+            ),
+        )
+        merged_ms = processor.snap_merged_segments(merged_ms, str(audio_path))
+        if not skip_audio_clip and merged_ms:
+            clip_segments_with_fade(
+                ad_segments_ms=merged_ms,
+                fade_ms=config.output.fade_ms,
+                in_path=str(audio_path),
+                out_path=str(cut_path),
+                use_vbr=True,
+            )
+
+    wall_s = time.time() - started
+    payload = {
+        "show_id": show_id,
+        "n_transcript_segments": len(segments),
+        "ad_segments_s": [[a, b] for a, b in ad_seconds],
+        "cut_segments_s": [[a / 1000.0, b / 1000.0] for a, b in merged_ms],
+        "cut_path": str(cut_path),
+        "duration_s": duration_ms / 1000.0,
+        "spend_usd_after": tracker.usd,
+        "scout_confirm": False,
+        "quote_anchor": True,
+        "n_quotes": len(classifier.last_matches),
+        "n_word": sum(1 for item in classifier.last_matches if item.method == "word"),
+        "n_segment_fallback": sum(
+            1 for item in classifier.last_matches if item.method == "segment_fallback"
+        ),
+        "n_chunk_fallback": sum(
+            1 for item in classifier.last_matches if item.method == "chunk_fallback"
+        ),
+        "n_dropped": sum(1 for item in classifier.last_matches if item.dropped),
+        "input_tokens": classifier.last_input_tokens,
+        "output_tokens": classifier.last_output_tokens,
+        "wall_s": wall_s,
+        "word_whisper_s": classifier.last_word_whisper_s,
+        "classify_s": classifier.last_classify_s,
     }
     _write_json(prod_path, payload)
     return payload
