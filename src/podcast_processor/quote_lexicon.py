@@ -79,8 +79,13 @@ class LexicalTuneNote:
 
 TUNE_NOTES = (
     LexicalTuneNote(
+        "forward_trim_bridge_or_leadin",
+        "npr_wait_wait 717/1883 and planet_money 1199",
+        "c_overcut_show / d_split_merge",
+    ),
+    LexicalTuneNote(
         "union_v1_later_start",
-        "npr_wait_wait 717/1883 and planet_money 1199 (v1 lead-in vs v2 bumper)",
+        "npr_wait_wait 717/1883 and planet_money 1199 (unused in scored lexical_v2; same starts as forward-trim)",
         "c_overcut_show / d_split_merge",
     ),
     LexicalTuneNote(
