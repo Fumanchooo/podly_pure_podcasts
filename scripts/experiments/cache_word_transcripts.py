@@ -29,6 +29,7 @@ def main() -> int:
     parser.add_argument("--show-id", action="append", default=[])
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
     downloads = json.loads((args.audio_dir / "downloads.json").read_text(encoding="utf-8"))
     shows = args.show_id or [
         sid

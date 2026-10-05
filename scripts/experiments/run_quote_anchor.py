@@ -95,6 +95,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
     if DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM:
         logging.error("enable_bow_scout_gemini_confirm must stay false")
         return 2
