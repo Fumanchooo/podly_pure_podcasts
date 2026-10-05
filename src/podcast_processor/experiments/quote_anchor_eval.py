@@ -268,7 +268,7 @@ def complete_json(
         budget.record_cache(input_tokens=pin, output_tokens=pout)
         return str(payload.get("content") or '{"ads":[]}')
     est_in = estimate_tokens_from_text(QUOTE_SYSTEM_PROMPT + user)
-    est_usd = usd_for_tokens(est_in, 200, QUOTE_PRICES)
+    est_usd = usd_for_tokens(est_in, 400, QUOTE_PRICES)
     if not budget.allow(est_usd):
         raise BudgetExceeded(
             f"Gemini UTC-day cap would be exceeded (remaining ${budget.remaining:.4f})"
@@ -281,7 +281,8 @@ def complete_json(
         ],
         timeout=300,
         response_format={"type": "json_object"},
-        max_tokens=1024,
+        max_tokens=512,
+        reasoning_effort="low",
     )
     content = response.choices[0].message.content or '{"ads":[]}'
     usage = getattr(response, "usage", None)
