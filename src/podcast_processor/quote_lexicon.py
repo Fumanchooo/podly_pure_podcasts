@@ -157,6 +157,7 @@ def refine_quote_span(
     max_forward_s: float = MAX_FORWARD_S,
     min_hole_s: float = MIN_LONG_HOLE_S,
     max_hole_s: float = MAX_HOLE_PULL_S,
+    pull_dai_bed: bool = True,
 ) -> tuple[float, float]:
     """Trim show lead-in; pull start across a pre-quote hole; eat wordless CTA tails."""
     if not words or end <= start:
@@ -205,7 +206,12 @@ def refine_quote_span(
         ident = bool(SHOW_IDENT_RE.search(prev_text))
         closer = bool(CLOSER_RE.search(prev_text))
         long_ok = min_hole_s <= hole <= max_hole_s
-        dai_bed = 8.0 <= hole < min_hole_s and hole <= max_hole_s and not closer
+        dai_bed = (
+            pull_dai_bed
+            and 8.0 <= hole < min_hole_s
+            and hole <= max_hole_s
+            and not closer
+        )
         if not ident and (long_ok or dai_bed):
             start_t = prev.end
 
@@ -285,12 +291,15 @@ def lexical_cuts_from_matches(
     gaps: list[tuple[float, float]] | None = None,
     *,
     asymmetric_end: bool = False,
+    pull_dai_bed: bool = True,
 ) -> list[tuple[float, float]]:
     cuts: list[tuple[float, float]] = []
     for item in matches:
         if item.end <= item.start:
             continue
-        start, end = refine_quote_span(words, item.start, item.end, gaps=gaps)
+        start, end = refine_quote_span(
+            words, item.start, item.end, gaps=gaps, pull_dai_bed=pull_dai_bed
+        )
         if asymmetric_end and item.bound_end is not None and item.bound_end > end:
             end = float(item.bound_end)
         if end > start:

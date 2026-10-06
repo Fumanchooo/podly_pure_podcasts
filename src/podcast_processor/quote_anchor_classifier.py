@@ -99,6 +99,7 @@ class QuoteAnchorClassifier:
         llm_cache_dir: Path | None = None,
         whisper_model: str = "base",
         require_llm_cache: bool = False,
+        pull_dai_bed: bool = True,
     ) -> None:
         self.config = config
         self.logger = logger or logging.getLogger("global_logger")
@@ -108,6 +109,7 @@ class QuoteAnchorClassifier:
         self.llm_cache_dir = llm_cache_dir
         self.whisper_model = whisper_model
         self.require_llm_cache = require_llm_cache
+        self.pull_dai_bed = pull_dai_bed
         self.last_matches: list[QuoteMatch] = []
         self.last_cuts: list[tuple[float, float]] = []
         self.last_input_tokens = 0
@@ -178,7 +180,9 @@ class QuoteAnchorClassifier:
             idx += len(chunk)
 
         gaps = self._silence_gaps(post)
-        cuts = lexical_cuts_from_matches(matches, loaded, gaps)
+        cuts = lexical_cuts_from_matches(
+            matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
+        )
         # Fail-closed: a match that lexical collapsed still keeps its raw span.
         if len(cuts) < len(matches):
             used = {(round(a, 3), round(b, 3)) for a, b in cuts}

@@ -226,7 +226,7 @@ def main() -> int:
                 audio = REPO / audio
             title = str(downloads[show_id].get("resolved_title") or show_id)
             bl_cached = (OUT / "baseline" / "production" / f"{show_id}.json").is_file()
-            qa_cached = (OUT / "quote-anchor" / "production" / f"{show_id}.json").is_file()
+            qa_cached = (OUT / os.environ.get("QA_OUT", "quote-anchor") / "production" / f"{show_id}.json").is_file()
             try:
                 t0 = time.time()
                 baseline_prod[show_id] = run_production_cut(
@@ -248,7 +248,7 @@ def main() -> int:
                     show_id=show_id,
                     title=title,
                     audio_path=audio,
-                    output_dir=OUT / "quote-anchor",
+                    output_dir=OUT / os.environ.get("QA_OUT", "quote-anchor"),
                     config=qa_config,
                     app=qa_app,
                     transcriber=transcriber,
@@ -257,8 +257,9 @@ def main() -> int:
                     llm_cache_dir=LLM_CACHE,
                     transcripts_dir=OUT / "baseline" / "transcripts",
                     skip_audio_clip=True,
-                    require_llm_cache=True,
-                    prefer_transcript_segments=True,
+                    require_llm_cache=os.environ.get("QA_REQUIRE_LLM_CACHE", "1") != "0",
+                    prefer_transcript_segments=os.environ.get("QA_SEGMENT_LLM", "1") != "0",
+                    pull_dai_bed=os.environ.get("QA_DAI_BED", "1") != "0",
                 )
                 walls_qa[show_id] = float(
                     quote_prod[show_id].get("wall_s")

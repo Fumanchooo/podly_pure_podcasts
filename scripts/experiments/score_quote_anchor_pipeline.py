@@ -7,6 +7,7 @@ Does not retune constants.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
@@ -48,11 +49,33 @@ RUN = REPO / "docs/experiments/auto_gold/runs/quote-anchor"
 WORDS = RUN / "words"
 LLM_CACHE = RUN / "llm_cache_v2"
 SILENCE = REPO / DEFAULT_SILENCE_CACHE
-OUT = RUN / "pipeline-v2"
 
 GATES_INNER = 0.965
 GATES_NOT_AD = 2.7
 GATES_EDGE = 26.4
+UTC_CAP = 0.50
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", default="pipeline-v2")
+    parser.add_argument(
+        "--prefer-transcript-segments",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--require-llm-cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument(
+        "--pull-dai-bed",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    parser.add_argument("--prior-usd", type=float, default=0.0)
+    return parser.parse_args()
 
 
 def _load_keys() -> None:
@@ -105,6 +128,8 @@ def _metrics(totals, *, n_shows: int) -> dict:
 
 
 def main() -> int:
+    args = parse_args()
+    out = RUN / args.out
     if DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM:
         print("scout must stay false", file=sys.stderr)
         return 2
@@ -112,7 +137,7 @@ def main() -> int:
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
     os.environ["PODLY_WRITER_LOCAL_FALLBACK"] = "1"
     _load_keys()
-    OUT.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     labels = load_json(LABELS)
     windows = list(labels.get("windows") or [])
     downloads = load_json(AUDIO / "downloads.json")
@@ -135,7 +160,7 @@ def main() -> int:
         baseline_cuts,
     )
     config = production_config(enable_quote_anchor_boundaries=True)
-    app = make_flask(OUT / "scorecard.sqlite")
+    app = make_flask(out / "scorecard.sqlite")
     force_local_writer()
     tracker = SpendTracker()
     transcriber = LocalWhisperTranscriber(logging.getLogger("pipeline"), "base")
@@ -143,46 +168,61 @@ def main() -> int:
     tokens = TokenTotals()
     walls: dict[str, float] = {}
     t0 = time.time()
-    with app.app_context():
-        for show_id in scored:
-            audio = Path(str(downloads[show_id]["audio_path"]))
-            if not audio.is_absolute():
-                audio = REPO / audio
-            title = str(downloads[show_id].get("resolved_title") or show_id)
-            started = time.time()
-            payload = run_quote_anchor_production_cut(
-                show_id=show_id,
-                title=title,
-                audio_path=audio,
-                output_dir=OUT,
-                config=config,
-                app=app,
-                transcriber=transcriber,
-                tracker=tracker,
-                words_cache=WORDS / f"{show_id}.json",
-                llm_cache_dir=LLM_CACHE,
-                skip_audio_clip=True,
-                transcripts_dir=AUDIO / "transcripts",
-                require_llm_cache=True,
-                silence_gaps=[
-                    (g.start, g.end) for g in load_silence_gaps(show_id, audio, SILENCE)
-                ],
-            )
-            walls[show_id] = time.time() - started
-            production[show_id] = payload
-            tokens.input_tokens += int(payload.get("input_tokens") or 0)
-            tokens.output_tokens += int(payload.get("output_tokens") or 0)
-            tokens.calls += 1
-            tokens.n_episodes += 1
-            logging.info(
-                "%s wall=%.1fs quotes=%s word=%s seg_fb=%s cuts=%s",
-                show_id,
-                walls[show_id],
-                payload.get("n_quotes"),
-                payload.get("n_word"),
-                payload.get("n_segment_fallback"),
-                len(payload.get("cut_segments_s") or []),
-            )
+    tracker.install()
+    try:
+        with app.app_context():
+            for show_id in scored:
+                remaining = UTC_CAP - args.prior_usd - tracker.usd
+                if remaining < 0.02 and not args.require_llm_cache:
+                    logging.warning(
+                        "UTC Gemini cap would be exceeded before %s (remaining $%.3f)",
+                        show_id,
+                        remaining,
+                    )
+                    break
+                audio = Path(str(downloads[show_id]["audio_path"]))
+                if not audio.is_absolute():
+                    audio = REPO / audio
+                title = str(downloads[show_id].get("resolved_title") or show_id)
+                started = time.time()
+                payload = run_quote_anchor_production_cut(
+                    show_id=show_id,
+                    title=title,
+                    audio_path=audio,
+                    output_dir=out,
+                    config=config,
+                    app=app,
+                    transcriber=transcriber,
+                    tracker=tracker,
+                    words_cache=WORDS / f"{show_id}.json",
+                    llm_cache_dir=LLM_CACHE,
+                    skip_audio_clip=True,
+                    transcripts_dir=AUDIO / "transcripts",
+                    require_llm_cache=args.require_llm_cache,
+                    prefer_transcript_segments=args.prefer_transcript_segments,
+                    pull_dai_bed=args.pull_dai_bed,
+                    silence_gaps=[
+                        (g.start, g.end) for g in load_silence_gaps(show_id, audio, SILENCE)
+                    ],
+                )
+                walls[show_id] = time.time() - started
+                production[show_id] = payload
+                tokens.input_tokens += int(payload.get("input_tokens") or 0)
+                tokens.output_tokens += int(payload.get("output_tokens") or 0)
+                tokens.calls += 1
+                tokens.n_episodes += 1
+                logging.info(
+                    "%s wall=%.1fs quotes=%s word=%s seg_fb=%s cuts=%s spend=$%.4f",
+                    show_id,
+                    walls[show_id],
+                    payload.get("n_quotes"),
+                    payload.get("n_word"),
+                    payload.get("n_segment_fallback"),
+                    len(payload.get("cut_segments_s") or []),
+                    tracker.usd,
+                )
+    finally:
+        tracker.restore()
     qa_cuts = {
         sid: [(float(a), float(b)) for a, b in row.get("cut_segments_s") or []]
         for sid, row in production.items()
@@ -200,6 +240,10 @@ def main() -> int:
         "claim": CLAIM_LOCKED,
         "scout": False,
         "integrated_pipeline": True,
+        "prefer_transcript_segments": args.prefer_transcript_segments,
+        "pull_dai_bed": args.pull_dai_bed,
+        "gemini_usd": tracker.usd,
+        "utc_prior_usd": args.prior_usd,
         "baseline": _metrics(baseline.totals, n_shows=len(baseline_cuts)),
         "quote_anchor": _metrics(quote.totals, n_shows=len(production)),
         "tokens_per_episode": {"quote_anchor": pin, "baseline": bpin},
@@ -219,14 +263,21 @@ def main() -> int:
     }
     qa_gates = summary["quote_anchor"]["gates"]
     tok_ok = pin <= bpin + 1e-9
-    summary["original10_pass"] = all(qa_gates.values()) and tok_ok
+    summary["original10_pass"] = (
+        len(production) == 10 and all(qa_gates.values()) and tok_ok
+    )
     summary["tokens_ok"] = tok_ok
-    (OUT / "score.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    (out / "score.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     quote.notes = [
         "Integrated quote-anchor (prompt_v2 + lexical_v2 + AudioProcessor merge/snap).",
-        "Cached words + llm_cache_v2. Scout off. general_podcast_ads LOCKED.",
+        "Scout off. general_podcast_ads LOCKED.",
+        (
+            "LLM source: segment transcript"
+            if args.prefer_transcript_segments
+            else "LLM source: word-derived segments"
+        ),
     ]
-    (OUT / "SCORECARD.md").write_text(render_scorecard_md(quote), encoding="utf-8")
+    (out / "SCORECARD.md").write_text(render_scorecard_md(quote), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0 if summary["original10_pass"] else 1
 

@@ -533,7 +533,8 @@ def run_quote_anchor_production_cut(
     silence_gaps: list[tuple[float, float]] | None = None,
     transcripts_dir: Path | None = None,
     require_llm_cache: bool = False,
-    prefer_transcript_segments: bool = False,
+    prefer_transcript_segments: bool = True,
+    pull_dai_bed: bool = True,
 ) -> dict[str, Any]:
     """Integrated quote-anchor classify + AudioProcessor merge/snap.
 
@@ -623,6 +624,7 @@ def run_quote_anchor_production_cut(
             word_cache_path=words_cache,
             llm_cache_dir=llm_cache_dir,
             require_llm_cache=require_llm_cache,
+            pull_dai_bed=pull_dai_bed,
         )
         classifier.silence_gaps_override = silence_gaps
         classifier.classify(transcript_segments=db_segments, post=post)
