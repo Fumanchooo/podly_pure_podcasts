@@ -413,6 +413,7 @@ def run_production_cut(
     prod_path = output_dir / "production" / f"{show_id}.json"
     if prod_path.exists():
         return _read_json(prod_path)
+    started = time.time()
     segments = _load_or_transcribe(audio_path, cache_path, transcriber)
     cut_path = output_dir / "cut" / f"{show_id}.mp3"
     cut_path.parent.mkdir(parents=True, exist_ok=True)
@@ -509,6 +510,7 @@ def run_production_cut(
         "duration_s": duration_ms / 1000.0,
         "spend_usd_after": tracker.usd,
         "scout_confirm": False,
+        "wall_s": time.time() - started,
     }
     _write_json(prod_path, payload)
     return payload
@@ -545,6 +547,8 @@ def run_quote_anchor_production_cut(
 
     cache_path = (transcripts_dir or (output_dir / "transcripts")) / f"{show_id}.json"
     prod_path = output_dir / "production" / f"{show_id}.json"
+    if prod_path.exists():
+        return _read_json(prod_path)
     segments: list[WhisperSegment]
     word_payload = load_word_payload(words_cache) if words_cache else None
     word_segs = segments_from_payload(word_payload) if word_payload else []

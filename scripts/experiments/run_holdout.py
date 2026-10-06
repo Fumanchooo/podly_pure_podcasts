@@ -34,7 +34,6 @@ from podcast_processor.experiments.prod_vs_auto_gold import (
     run_production_cut,
     run_quote_anchor_production_cut,
 )
-from podcast_processor.experiments.quote_anchor_eval import load_silence_gaps
 from shared import defaults as DEFAULTS
 from shared.env import gemini_api_key
 
@@ -43,10 +42,11 @@ HOLDOUT_SHOWS = REPO / "docs/experiments/auto_gold/holdout_shows.json"
 OUT = REPO / "docs/experiments/auto_gold/runs/quote-anchor/holdout"
 WORDS = OUT / "words"
 LLM_CACHE = OUT / "llm_cache_v2"
-SILENCE = REPO / "docs/experiments/auto_gold/runs/boundary-snap-eval/silence_cache"
 
 JUDGE_CAP = 0.20
-PIPELINE_CAP = 0.28  # leftover room under $0.50
+# UTC 2026-10-06: $0.50 day cap. Judge ~$0.016. Seed tracker from prior
+# production jsons so a resume cannot double-count leftover Oct-5 room.
+PIPELINE_CAP = 0.47
 
 
 def _load_keys() -> None:
@@ -206,6 +206,17 @@ def main() -> int:
         quote_prod: dict[str, dict] = {}
         walls_bl: dict[str, float] = {}
         walls_qa: dict[str, float] = {}
+        prior_rows = list((OUT / "baseline" / "production").glob("*.json")) + list(
+            (OUT / "quote-anchor" / "production").glob("*.json")
+        )
+        for path in prior_rows:
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            tracker.usd = max(tracker.usd, float(row.get("spend_usd_after") or 0.0))
+        if tracker.usd:
+            logging.info("seeded pipeline spend tracker at $%.3f from prior production", tracker.usd)
         for show_id in have_audio:
             if tracker.usd > PIPELINE_CAP:
                 logging.warning("pipeline cap reached before %s", show_id)
@@ -214,6 +225,8 @@ def main() -> int:
             if not audio.is_absolute():
                 audio = REPO / audio
             title = str(downloads[show_id].get("resolved_title") or show_id)
+            bl_cached = (OUT / "baseline" / "production" / f"{show_id}.json").is_file()
+            qa_cached = (OUT / "quote-anchor" / "production" / f"{show_id}.json").is_file()
             t0 = time.time()
             baseline_prod[show_id] = run_production_cut(
                 show_id=show_id,
@@ -225,7 +238,10 @@ def main() -> int:
                 transcriber=transcriber,
                 tracker=tracker,
             )
-            walls_bl[show_id] = time.time() - t0
+            walls_bl[show_id] = float(
+                baseline_prod[show_id].get("wall_s")
+                or (0.0 if bl_cached else time.time() - t0)
+            )
             t1 = time.time()
             quote_prod[show_id] = run_quote_anchor_production_cut(
                 show_id=show_id,
@@ -238,10 +254,15 @@ def main() -> int:
                 tracker=tracker,
                 words_cache=WORDS / f"{show_id}.json",
                 llm_cache_dir=LLM_CACHE,
+                transcripts_dir=OUT / "baseline" / "transcripts",
                 skip_audio_clip=True,
                 require_llm_cache=False,
             )
-            walls_qa[show_id] = time.time() - t1
+            walls_qa[show_id] = float(
+                quote_prod[show_id].get("wall_s")
+                or quote_prod[show_id].get("word_whisper_s")
+                or (0.0 if qa_cached else time.time() - t1)
+            )
             logging.info(
                 "%s baseline=%.1fs qa=%.1fs spend=$%.3f",
                 show_id,
