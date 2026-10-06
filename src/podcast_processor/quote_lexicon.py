@@ -94,6 +94,11 @@ TUNE_NOTES = (
         "f_label_off",
     ),
     LexicalTuneNote(
+        "pull_start_across_dai_bed_8_to_12s",
+        "holdout npr_indicator 422 (9s wordless DAI bed before Wait Wait; now-seen)",
+        "a_missed_leadin",
+    ),
+    LexicalTuneNote(
         "extend_end_to_silence_in_word_gap",
         "darknet_diaries 53–61 long bed (silence start); planet_money 21–24 short CTA music (silence end)",
         "b_missed_outro",
@@ -189,16 +194,19 @@ def refine_quote_span(
 
     start_t = words[new_lo].start
     # Pull back across a hole *before the original quote*, not a pause we just skipped.
-    # Never eat a preceding show ident. Long holes (≥12s) are post-roll beds;
-    # shorter holes are only used in the opening window.
+    # Never eat a preceding show ident. Long holes (≥12s) are post-roll beds.
+    # 8–12s wordless holes are DAI beds (NPR Indicator Wait Wait insert) unless
+    # the previous sentence is a closer/credits line (Planet Money 1921).
     if lo > 0 and new_lo == lo:
         prev = words[lo - 1]
         hole = words[lo].start - prev.end
         prev_lo = _sentence_start(words, lo - 1)
         prev_text = _join(words, prev_lo, lo).strip()
         ident = bool(SHOW_IDENT_RE.search(prev_text))
+        closer = bool(CLOSER_RE.search(prev_text))
         long_ok = min_hole_s <= hole <= max_hole_s
-        if not ident and long_ok:
+        dai_bed = 8.0 <= hole < min_hole_s and hole <= max_hole_s and not closer
+        if not ident and (long_ok or dai_bed):
             start_t = prev.end
 
     if start < PREROLL_SNAP_S and new_lo == lo:

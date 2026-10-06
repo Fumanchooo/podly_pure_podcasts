@@ -56,14 +56,13 @@ class TranscriptionManager:
         if isinstance(self.config.whisper, RemoteWhisperConfig):
             return OpenAIWhisperTranscriber(self.logger, self.config.whisper)
         if isinstance(self.config.whisper, LocalWhisperConfig):
-            from podcast_processor.quote_anchor_classifier import (
-                quote_anchor_boundaries_enabled,
-            )
-
+            # Segment Whisper only. word_timestamps=True can drop DAI midrolls
+            # (NPR Indicator Wise + donate). Quote-anchor loads word timings in
+            # QuoteAnchorClassifier.load_words and fail-closes to segment edges.
             return LocalWhisperTranscriber(
                 self.logger,
                 self.config.whisper.model,
-                word_timestamps=quote_anchor_boundaries_enabled(self.config),
+                word_timestamps=False,
             )
         if isinstance(self.config.whisper, GroqWhisperConfig):
             return GroqWhisperTranscriber(self.logger, self.config.whisper)

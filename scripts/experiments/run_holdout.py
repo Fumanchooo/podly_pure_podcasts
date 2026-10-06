@@ -257,7 +257,8 @@ def main() -> int:
                     llm_cache_dir=LLM_CACHE,
                     transcripts_dir=OUT / "baseline" / "transcripts",
                     skip_audio_clip=True,
-                    require_llm_cache=False,
+                    require_llm_cache=True,
+                    prefer_transcript_segments=True,
                 )
                 walls_qa[show_id] = float(
                     quote_prod[show_id].get("wall_s")
@@ -292,6 +293,17 @@ def main() -> int:
     baseline = score_windows(labeled, bl_cuts)
     quote = score_windows(labeled, qa_cuts)
     gate = holdout_ok(baseline, quote)
+    per_show = {}
+    for sid in sorted(scored):
+        b = baseline.per_show.get(sid)
+        q = quote.per_show.get(sid)
+        if b is None or q is None:
+            continue
+        per_show[sid] = {
+            "baseline_inner": b.span_seconds_recall(),
+            "quote_inner": q.span_seconds_recall(),
+            "delta_pp": (q.span_seconds_recall() - b.span_seconds_recall()) * 100.0,
+        }
     summary = {
         "gold_family": GOLD_FAMILY,
         "claim": CLAIM_LOCKED,
@@ -299,6 +311,7 @@ def main() -> int:
         "untouched_constants": True,
         "n_shows": len(scored),
         "shows": sorted(scored),
+        "per_show": per_show,
         "judge_spend_usd": judge_spend,
         "pipeline_spend_usd": tracker.usd,
         "baseline": {

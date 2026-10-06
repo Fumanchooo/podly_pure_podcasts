@@ -275,3 +275,32 @@ def test_hybrid_uses_segment_edge_bound_from_resolve() -> None:
     assert matches[0].method == "word"
     assert matches[0].bound_start == 7.0
     assert matches[0].bound_end == 13.0
+
+
+def test_segment_fallback_when_dai_missing_from_word_stream() -> None:
+    """Word-timestamp Whisper dropped the midroll; segment transcript still has it."""
+    words = _words(
+        ("please.", 401.0, 401.2),
+        ("Hey,", 435.98, 436.4),
+        ("it's", 439.3, 439.5),
+        ("Peter.", 439.7, 440.2),
+        ("podcasts.", 456.0, 457.8),
+    )
+    segments = [
+        SegmentSpan(404.36, 409.36, "This message comes from Wise, the smart way"),
+        SegmentSpan(419.36, 427.36, "Keep public media public donate.npr.org"),
+        SegmentSpan(439.36, 459.36, "Hey it's me Peter wherever you get your podcasts"),
+    ]
+    ad = QuoteAd(
+        start_quote="This message comes from Wise, the smart",
+        end_quote="wherever you get your podcasts",
+        content_type="promotional_external",
+        confidence=0.95,
+    )
+    matches = resolve_ads(
+        [ad], words, segments, chunk_start=400.0, chunk_end=470.0,
+        word_from=0, word_to=len(words),
+    )
+    assert matches[0].method == "segment_fallback"
+    assert matches[0].start == 404.36
+    assert matches[0].end == 459.36

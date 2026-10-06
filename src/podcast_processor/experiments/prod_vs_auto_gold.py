@@ -533,6 +533,7 @@ def run_quote_anchor_production_cut(
     silence_gaps: list[tuple[float, float]] | None = None,
     transcripts_dir: Path | None = None,
     require_llm_cache: bool = False,
+    prefer_transcript_segments: bool = False,
 ) -> dict[str, Any]:
     """Integrated quote-anchor classify + AudioProcessor merge/snap.
 
@@ -552,7 +553,7 @@ def run_quote_anchor_production_cut(
     segments: list[WhisperSegment]
     word_payload = load_word_payload(words_cache) if words_cache else None
     word_segs = segments_from_payload(word_payload) if word_payload else []
-    if word_segs:
+    if word_segs and not prefer_transcript_segments:
         segments = [
             WhisperSegment(start=a, end=b, text=text) for a, b, text in word_segs if b > a
         ]

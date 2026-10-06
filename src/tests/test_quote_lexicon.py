@@ -246,6 +246,40 @@ def test_wherever_outro_does_not_trim_opening() -> None:
     assert start == 0.0
 
 
+def test_dai_bed_after_voicemail_bye_pulls() -> None:
+    # holdout npr_indicator 422: 9s wordless DAI bed after "Bye-bye." then Wait Wait.
+    words = _words(
+        ("Thank", 421.0, 421.3),
+        ("you", 421.3, 421.5),
+        ("so", 421.5, 421.7),
+        ("much.", 421.7, 422.0),
+        ("Bye-bye.", 426.6, 426.8),
+        ("Hey,", 435.98, 436.4),
+        ("it's", 439.3, 439.5),
+        ("me,", 439.5, 439.7),
+        ("Peter.", 439.7, 440.2),
+    )
+    start, end = refine_quote_span(words, 435.98, 440.2)
+    assert abs(start - 426.8) < 1e-6
+    assert end == 440.2
+
+
+def test_credits_nine_second_hole_does_not_pull() -> None:
+    # planet_money 1921: "thanks for listening" then 9.9s then sister-show.
+    words = _words(
+        ("Thanks", 1910.94, 1911.14),
+        ("for", 1911.14, 1911.26),
+        ("listening.", 1911.26, 1911.48),
+        ("This", 1921.38, 1922.10),
+        ("week", 1922.10, 1922.36),
+        ("on", 1922.36, 1922.64),
+        ("Sources.", 1922.64, 1923.14),
+    )
+    start, end = refine_quote_span(words, 1921.38, 1923.14)
+    assert start == 1921.38
+    assert end == 1923.14
+
+
 def test_mid_episode_short_hole_does_not_pull() -> None:
     words = _words(
         ("end", 100.0, 100.3),
