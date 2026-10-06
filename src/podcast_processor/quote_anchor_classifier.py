@@ -331,6 +331,10 @@ class QuoteAnchorClassifier:
                     or "429" in text
                     or "rate limit" in text
                     or "internal" in text
+                    or "name resolution" in text
+                    or "apiconnectionerror" in text
+                    or "connecterror" in text
+                    or "connect" in text
                 )
                 if not retryable or attempt >= retries - 1:
                     raise

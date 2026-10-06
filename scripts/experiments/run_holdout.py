@@ -227,42 +227,46 @@ def main() -> int:
             title = str(downloads[show_id].get("resolved_title") or show_id)
             bl_cached = (OUT / "baseline" / "production" / f"{show_id}.json").is_file()
             qa_cached = (OUT / "quote-anchor" / "production" / f"{show_id}.json").is_file()
-            t0 = time.time()
-            baseline_prod[show_id] = run_production_cut(
-                show_id=show_id,
-                title=title,
-                audio_path=audio,
-                output_dir=OUT / "baseline",
-                config=bl_config,
-                app=bl_app,
-                transcriber=transcriber,
-                tracker=tracker,
-            )
-            walls_bl[show_id] = float(
-                baseline_prod[show_id].get("wall_s")
-                or (0.0 if bl_cached else time.time() - t0)
-            )
-            t1 = time.time()
-            quote_prod[show_id] = run_quote_anchor_production_cut(
-                show_id=show_id,
-                title=title,
-                audio_path=audio,
-                output_dir=OUT / "quote-anchor",
-                config=qa_config,
-                app=qa_app,
-                transcriber=transcriber,
-                tracker=tracker,
-                words_cache=WORDS / f"{show_id}.json",
-                llm_cache_dir=LLM_CACHE,
-                transcripts_dir=OUT / "baseline" / "transcripts",
-                skip_audio_clip=True,
-                require_llm_cache=False,
-            )
-            walls_qa[show_id] = float(
-                quote_prod[show_id].get("wall_s")
-                or quote_prod[show_id].get("word_whisper_s")
-                or (0.0 if qa_cached else time.time() - t1)
-            )
+            try:
+                t0 = time.time()
+                baseline_prod[show_id] = run_production_cut(
+                    show_id=show_id,
+                    title=title,
+                    audio_path=audio,
+                    output_dir=OUT / "baseline",
+                    config=bl_config,
+                    app=bl_app,
+                    transcriber=transcriber,
+                    tracker=tracker,
+                )
+                walls_bl[show_id] = float(
+                    baseline_prod[show_id].get("wall_s")
+                    or (0.0 if bl_cached else time.time() - t0)
+                )
+                t1 = time.time()
+                quote_prod[show_id] = run_quote_anchor_production_cut(
+                    show_id=show_id,
+                    title=title,
+                    audio_path=audio,
+                    output_dir=OUT / "quote-anchor",
+                    config=qa_config,
+                    app=qa_app,
+                    transcriber=transcriber,
+                    tracker=tracker,
+                    words_cache=WORDS / f"{show_id}.json",
+                    llm_cache_dir=LLM_CACHE,
+                    transcripts_dir=OUT / "baseline" / "transcripts",
+                    skip_audio_clip=True,
+                    require_llm_cache=False,
+                )
+                walls_qa[show_id] = float(
+                    quote_prod[show_id].get("wall_s")
+                    or quote_prod[show_id].get("word_whisper_s")
+                    or (0.0 if qa_cached else time.time() - t1)
+                )
+            except Exception:
+                logging.exception("holdout failed for %s; continuing", show_id)
+                continue
             logging.info(
                 "%s baseline=%.1fs qa=%.1fs spend=$%.3f",
                 show_id,
