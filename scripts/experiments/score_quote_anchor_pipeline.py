@@ -162,6 +162,8 @@ def main() -> int:
                 words_cache=WORDS / f"{show_id}.json",
                 llm_cache_dir=LLM_CACHE,
                 skip_audio_clip=True,
+                transcripts_dir=AUDIO / "transcripts",
+                require_llm_cache=True,
                 silence_gaps=[
                     (g.start, g.end) for g in load_silence_gaps(show_id, audio, SILENCE)
                 ],

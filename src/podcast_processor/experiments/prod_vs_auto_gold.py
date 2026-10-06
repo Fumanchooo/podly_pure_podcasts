@@ -529,16 +529,31 @@ def run_quote_anchor_production_cut(
     complete_fn: Any | None = None,
     skip_audio_clip: bool = True,
     silence_gaps: list[tuple[float, float]] | None = None,
+    transcripts_dir: Path | None = None,
+    require_llm_cache: bool = False,
 ) -> dict[str, Any]:
     """Integrated quote-anchor classify + AudioProcessor merge/snap.
 
     Does not call AdClassifier / neighbor expand / boundary refiner.
     """
     from podcast_processor.quote_anchor_classifier import QuoteAnchorClassifier
+    from podcast_processor.experiments.word_transcripts import (
+        load_word_payload,
+        segments_from_payload,
+    )
+    from podcast_processor.transcribe import Segment as WhisperSegment
 
-    cache_path = output_dir / "transcripts" / f"{show_id}.json"
+    cache_path = (transcripts_dir or (output_dir / "transcripts")) / f"{show_id}.json"
     prod_path = output_dir / "production" / f"{show_id}.json"
-    segments = _load_or_transcribe(audio_path, cache_path, transcriber)
+    segments: list[WhisperSegment]
+    word_payload = load_word_payload(words_cache) if words_cache else None
+    word_segs = segments_from_payload(word_payload) if word_payload else []
+    if word_segs:
+        segments = [
+            WhisperSegment(start=a, end=b, text=text) for a, b, text in word_segs if b > a
+        ]
+    else:
+        segments = _load_or_transcribe(audio_path, cache_path, transcriber)
     cut_path = output_dir / "cut" / f"{show_id}.mp3"
     cut_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -602,6 +617,7 @@ def run_quote_anchor_production_cut(
             complete_fn=complete_fn,
             word_cache_path=words_cache,
             llm_cache_dir=llm_cache_dir,
+            require_llm_cache=require_llm_cache,
         )
         classifier.silence_gaps_override = silence_gaps
         classifier.classify(transcript_segments=db_segments, post=post)

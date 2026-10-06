@@ -98,6 +98,7 @@ class QuoteAnchorClassifier:
         word_cache_path: Path | None = None,
         llm_cache_dir: Path | None = None,
         whisper_model: str = "base",
+        require_llm_cache: bool = False,
     ) -> None:
         self.config = config
         self.logger = logger or logging.getLogger("global_logger")
@@ -106,6 +107,7 @@ class QuoteAnchorClassifier:
         self.word_cache_path = word_cache_path
         self.llm_cache_dir = llm_cache_dir
         self.whisper_model = whisper_model
+        self.require_llm_cache = require_llm_cache
         self.last_matches: list[QuoteMatch] = []
         self.last_cuts: list[tuple[float, float]] = []
         self.last_input_tokens = 0
@@ -283,6 +285,10 @@ class QuoteAnchorClassifier:
             content = str(cached.get("content") or '{"ads":[]}')
             self._mark_model_call(model_call, content, status="success")
             return content, model_call
+        if self.require_llm_cache:
+            raise RuntimeError(
+                "quote-anchor LLM cache miss; refusing live Gemini call"
+            )
         if isinstance(self.config.whisper, TestWhisperConfig):
             content = '{"ads":[]}'
             self._mark_model_call(model_call, content, status="success")
