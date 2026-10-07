@@ -363,57 +363,85 @@ def reanchor_words_to_speech(
         if not bucket:
             continue
         start, end = _seg_start_end(seg)
+        clipped: list[WordTiming] = []
+        for word in bucket:
+            clipped_word = _clip_word_off_silence(word, gap_rows)
+            if clipped_word is not None:
+                clipped.append(clipped_word)
+        bucket = clipped
+        if not bucket:
+            continue
         intervals = speech_intervals(start, end, gap_rows)
         span = bucket[-1].end - bucket[0].start
         mean = span / float(len(bucket))
-        leading_bed = (
-            mean >= STRETCH_MEAN_WORD_S
-            and prev_end is not None
-            and (bucket[0].start - prev_end) >= MIN_LEAD_BED_S
+        packed = PACK_WORD_S * len(bucket)
+        fully_spanned = (
+            abs(bucket[0].start - start) < 0.45
+            and abs(bucket[-1].end - end) < 0.45
         )
-        silence_hit = False
-        if intervals and gap_rows:
-            for word in bucket:
-                for a, b in gap_rows:
-                    if (b - a) >= MIN_SPEECH_SILENCE_S and (
-                        min(word.end, b) - max(word.start, a) > 0.12
-                    ):
-                        silence_hit = True
-                        break
-                if silence_hit:
-                    break
+        leading_bed = (
+            fully_spanned
+            and mean >= 1.0
+            and (end - start) >= packed + 4.0
+            and prev_end is not None
+            and (start - prev_end) >= MIN_LEAD_BED_S
+        )
+        trailing_pause = (
+            not leading_bed
+            and intervals
+            and abs(bucket[0].start - intervals[0][0]) < 0.5
+            and (intervals[0][1] - intervals[0][0]) >= packed * 0.5
+            and (end - intervals[0][1]) >= MIN_SPEECH_SILENCE_S
+        )
         if leading_bed:
-            packed = PACK_WORD_S * len(bucket)
             t1 = end
             t0 = max(start, t1 - packed)
             if intervals:
                 last_a, last_b = intervals[-1]
-                packed = min(last_b - last_a, packed)
-                if packed >= 0.15:
+                pack = min(last_b - last_a, packed)
+                if pack >= 0.15:
                     t1 = last_b
-                    t0 = max(last_a, t1 - packed)
+                    t0 = max(last_a, t1 - pack)
             bucket = _place_tokens_on_intervals(
                 [word.word for word in bucket], [(t0, t1)]
             )
-        elif silence_hit and intervals:
-            use = intervals
-            last_dur = intervals[-1][1] - intervals[-1][0]
-            first_dur = intervals[0][1] - intervals[0][0]
-            # Trailing bed/pause: don't sprinkle leftover tokens after the hole.
-            if (
-                len(intervals) >= 2
-                and last_dur < 3.0
-                and last_dur < 0.5 * max(first_dur, 0.01)
-            ):
-                use = intervals[:-1]
+        elif trailing_pause:
             bucket = _place_tokens_on_intervals(
-                [word.word for word in bucket], use
+                [word.word for word in bucket], [intervals[0]]
             )
         out.extend(bucket)
         if bucket:
             prev_end = bucket[-1].end
     out.sort(key=lambda item: (item.start, item.end))
     return out
+
+
+def _clip_word_off_silence(
+    word: WordTiming, gaps: list[tuple[float, float]]
+) -> WordTiming | None:
+    """Shrink a word so it does not cover a ≥0.8s silence; drop if nothing left."""
+    start, end = word.start, word.end
+    for a, b in gaps:
+        if (b - a) < MIN_SPEECH_SILENCE_S:
+            continue
+        overlap = min(end, b) - max(start, a)
+        if overlap <= 0.12:
+            continue
+        before = max(0.0, min(end, a) - start)
+        after = max(0.0, end - max(start, b))
+        if after >= before:
+            start = max(start, b)
+            if end < start + 0.05:
+                end = start + 0.05
+        else:
+            end = min(end, a)
+            if end <= start:
+                return None
+    if end - start < 0.02:
+        return None
+    if start == word.start and end == word.end:
+        return word
+    return WordTiming(word=word.word, start=start, end=end)
 
 
 def align_words_to_segments(
