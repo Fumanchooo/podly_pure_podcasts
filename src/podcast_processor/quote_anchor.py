@@ -185,7 +185,11 @@ def match_quotes_in_order(
             threshold=threshold,
         )
         if end_hit is None:
-            results.append((ad, None))
+            # Keep the start hit so resolve_ads can grow the end via adjacent
+            # segments (Planet Money 1922 Sources & Methods; end quote often
+            # missing from the chunk).
+            results.append((ad, start_hit))
+            cursor = start_hit[1]
             continue
         span_start = start_hit[0]
         span_end = max(end_hit[1], start_hit[1])
@@ -225,6 +229,27 @@ def _segment_index_for_quote(
     return best_i
 
 
+def _extend_adjacent_segments(
+    segments: list[SegmentSpan],
+    start_i: int,
+    *,
+    max_gap_s: float = 0.5,
+    max_span_s: float = 10.0,
+) -> int:
+    """Grow a start-only fallback through packed follow-on segments."""
+    end_i = start_i
+    t0 = segments[start_i].start
+    while end_i + 1 < len(segments):
+        nxt = segments[end_i + 1]
+        gap = nxt.start - segments[end_i].end
+        if gap >= max_gap_s:
+            break
+        if nxt.end - t0 > max_span_s:
+            break
+        end_i += 1
+    return end_i
+
+
 def fallback_segment_edge(
     ad: QuoteAd,
     segments: list[SegmentSpan],
@@ -244,7 +269,7 @@ def fallback_segment_edge(
         in_chunk, ad.end_quote, start_at=start_i
     )
     if end_i is None:
-        end_i = start_i
+        end_i = _extend_adjacent_segments(in_chunk, start_i)
     start = in_chunk[start_i].start
     end = in_chunk[end_i].end
     if end <= start:
@@ -284,6 +309,10 @@ def resolve_ads(
                 if seg_bound is not None:
                     bound_start = min(seg_bound[0], start)
                     bound_end = max(seg_bound[1], end)
+                    # Start-only hit (end quote missed): take the packed
+                    # segment run so the cut is not just the first sentence.
+                    if end - start < 8.0 and bound_end > end:
+                        end = bound_end
                 else:
                     bound_start, bound_end = start, end
                 matches.append(

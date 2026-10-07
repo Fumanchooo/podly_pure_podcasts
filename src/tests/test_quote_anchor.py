@@ -124,6 +124,45 @@ def test_repeated_phrase_resolves_in_order() -> None:
     assert words[ordered[1][1][0]].start == 50.0
 
 
+def test_start_only_grows_through_adjacent_segments() -> None:
+    words = _words(
+        ("this", 1921.8, 1922.2),
+        ("week", 1922.2, 1922.6),
+        ("on", 1922.6, 1923.0),
+        ("sources", 1923.0, 1923.4),
+        ("and", 1923.4, 1923.8),
+        ("methods", 1923.8, 1924.2),
+        ("defense", 1924.2, 1924.6),
+        ("secretary", 1924.6, 1925.2),
+        ("speaks.", 1925.2, 1925.7),
+        ("we", 1925.8, 1926.0),
+        ("are", 1926.0, 1926.2),
+        ("no", 1926.2, 1926.4),
+        ("longer", 1926.4, 1926.8),
+        ("woke.", 1926.8, 1928.0),
+    )
+    segments = [
+        SegmentSpan(
+            1921.8,
+            1925.7,
+            "This week on Sources and Methods Defense Secretary speaks.",
+        ),
+        SegmentSpan(1925.8, 1928.0, "We are no longer woke."),
+        SegmentSpan(1940.0, 1944.0, "Power is up for grabs in Wisconsin."),
+    ]
+    ad = QuoteAd(
+        start_quote="This week on Sources and Methods Defense",
+        end_quote="totally missing closer phrase here",
+        content_type="educational/self_promo",
+        confidence=0.95,
+    )
+    matches = resolve_ads([ad], words, segments, chunk_start=1920.0, chunk_end=1950.0)
+    assert matches[0].dropped is False
+    assert matches[0].method == "word"
+    assert matches[0].start == 1921.8
+    assert matches[0].end == 1928.0
+
+
 def test_no_match_returns_none() -> None:
     words = _words(
         ("good", 0.0, 0.3),
