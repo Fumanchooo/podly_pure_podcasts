@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 MATCH_THRESHOLD = 0.72
 MIN_QUOTE_TOKENS = 3
 QUOTE_ANCHOR_SOURCE = "quote_anchor"
+# Forward pack for a missing end quote (Planet Money 1922 stub).
+START_ONLY_FORWARD_SPAN_S = 10.0
+# Backward pack across a leftover EOF chunk (live Indicator AARP behind
+# a packed sister-show). Keep forward at 10s so stacked midrolls do not grow.
+START_ONLY_BACK_SPAN_S = 25.0
+START_ONLY_MAX_GAP_S = 0.5
+START_ONLY_WORD_SPAN_S = 8.0
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -233,8 +240,8 @@ def _extend_adjacent_segments(
     segments: list[SegmentSpan],
     start_i: int,
     *,
-    max_gap_s: float = 0.5,
-    max_span_s: float = 10.0,
+    max_gap_s: float = START_ONLY_MAX_GAP_S,
+    max_span_s: float = START_ONLY_FORWARD_SPAN_S,
 ) -> int:
     """Grow a start-only fallback through packed follow-on segments."""
     end_i = start_i
@@ -250,12 +257,58 @@ def _extend_adjacent_segments(
     return end_i
 
 
+def _extend_adjacent_segments_back(
+    segments: list[SegmentSpan],
+    start_i: int,
+    *,
+    max_gap_s: float = START_ONLY_MAX_GAP_S,
+    max_span_s: float = START_ONLY_BACK_SPAN_S,
+    stop_before: float | None = None,
+) -> int:
+    """Grow a start-only hit backward through packed earlier segments.
+
+    Quote search stays in-chunk so leftover EOF chunks still find the
+    bumper line; packing uses the full episode list so a sister-show in
+    the previous chunk can join. stop_before is the prior match end.
+    """
+    t1 = segments[start_i].end
+    lo = start_i
+    while lo > 0:
+        prev = segments[lo - 1]
+        gap = segments[lo].start - prev.end
+        if gap >= max_gap_s:
+            break
+        if t1 - prev.start > max_span_s:
+            break
+        if stop_before is not None and prev.start < stop_before - 1e-9:
+            break
+        lo -= 1
+    return lo
+
+
+def _full_index_for(segments: list[SegmentSpan], target: SegmentSpan) -> int:
+    for i, seg in enumerate(segments):
+        if (
+            abs(seg.start - target.start) <= 1e-6
+            and abs(seg.end - target.end) <= 1e-6
+        ):
+            return i
+    return -1
+
+
+def _is_start_only(ad: QuoteAd, end_hit: int | None) -> bool:
+    if end_hit is None:
+        return True
+    return normalize_tokens(ad.end_quote) == normalize_tokens(ad.start_quote)
+
+
 def fallback_segment_edge(
     ad: QuoteAd,
     segments: list[SegmentSpan],
     *,
     chunk_start: float,
     chunk_end: float,
+    stop_before: float | None = None,
 ) -> tuple[float, float, float] | None:
     in_chunk = [
         seg for seg in segments if seg.end > chunk_start and seg.start < chunk_end
@@ -268,10 +321,28 @@ def fallback_segment_edge(
     end_i = _segment_index_for_quote(
         in_chunk, ad.end_quote, start_at=start_i
     )
+    full_start = _full_index_for(segments, in_chunk[start_i])
+    if full_start < 0:
+        full_start = start_i
+        grow_in = in_chunk
+    else:
+        grow_in = segments
+    full_end: int
     if end_i is None:
-        end_i = _extend_adjacent_segments(in_chunk, start_i)
-    start = in_chunk[start_i].start
-    end = in_chunk[end_i].end
+        full_end = _extend_adjacent_segments(grow_in, full_start)
+    else:
+        mapped_end = _full_index_for(grow_in, in_chunk[end_i])
+        full_end = mapped_end if mapped_end >= 0 else end_i
+    if _is_start_only(ad, end_i):
+        full_start = _extend_adjacent_segments_back(
+            grow_in, full_start, stop_before=stop_before
+        )
+        if end_i is None:
+            full_end = max(
+                full_end, _extend_adjacent_segments(grow_in, full_start)
+            )
+    start = grow_in[full_start].start
+    end = grow_in[full_end].end
     if end <= start:
         return None
     return start, end, MATCH_THRESHOLD
@@ -287,6 +358,7 @@ def resolve_ads(
     word_from: int = 0,
     word_to: int | None = None,
     threshold: float = MATCH_THRESHOLD,
+    stop_before: float | None = None,
 ) -> list[QuoteMatch]:
     """Map each reported ad to a cut. Never drop: chunk span is last resort."""
     ordered = match_quotes_in_order(
@@ -297,9 +369,14 @@ def resolve_ads(
         threshold=threshold,
     )
     matches: list[QuoteMatch] = []
+    prior = stop_before
     for ad, hit in ordered:
         seg_bound = fallback_segment_edge(
-            ad, segments, chunk_start=chunk_start, chunk_end=chunk_end
+            ad,
+            segments,
+            chunk_start=chunk_start,
+            chunk_end=chunk_end,
+            stop_before=prior,
         )
         if hit is not None:
             i0, i1, score = hit
@@ -309,10 +386,13 @@ def resolve_ads(
                 if seg_bound is not None:
                     bound_start = min(seg_bound[0], start)
                     bound_end = max(seg_bound[1], end)
-                    # Start-only hit (end quote missed): take the packed
-                    # segment run so the cut is not just the first sentence.
-                    if end - start < 8.0 and bound_end > end:
-                        end = bound_end
+                    # Start-only / short hit: take the packed segment run so
+                    # a leftover EOF bumper is not a 2s stub.
+                    if end - start < START_ONLY_WORD_SPAN_S:
+                        if bound_end > end:
+                            end = bound_end
+                        if bound_start < start:
+                            start = bound_start
                 else:
                     bound_start, bound_end = start, end
                 matches.append(
@@ -326,6 +406,7 @@ def resolve_ads(
                         bound_end=bound_end,
                     )
                 )
+                prior = max(prior or end, end)
                 continue
             logger.warning("word match collapsed for %r-%r", ad.start_quote, ad.end_quote)
         if seg_bound is not None:
@@ -347,6 +428,7 @@ def resolve_ads(
                     bound_end=end,
                 )
             )
+            prior = max(prior or end, end)
             continue
         logger.warning(
             "quote unmatched; chunk fallback %.1f-%.1f for %r",
@@ -354,17 +436,19 @@ def resolve_ads(
             chunk_end,
             ad.start_quote[:40],
         )
+        chunk_end_t = max(chunk_end, chunk_start + 0.5)
         matches.append(
             QuoteMatch(
                 ad=ad,
                 start=chunk_start,
-                end=max(chunk_end, chunk_start + 0.5),
+                end=chunk_end_t,
                 method="chunk_fallback",
                 score=0.0,
                 bound_start=chunk_start,
-                bound_end=max(chunk_end, chunk_start + 0.5),
+                bound_end=chunk_end_t,
             )
         )
+        prior = max(prior or chunk_end_t, chunk_end_t)
     return matches
 
 

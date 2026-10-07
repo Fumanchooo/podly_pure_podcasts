@@ -124,6 +124,101 @@ def test_repeated_phrase_resolves_in_order() -> None:
     assert words[ordered[1][1][0]].start == 50.0
 
 
+def test_start_only_grows_back_across_leftover_eof_chunk() -> None:
+    """Live Indicator 2026-10-07: leftover 1-seg chunk after a sister-show."""
+    words = _words(
+        ("This", 632.9, 633.2),
+        ("election", 633.2, 633.6),
+        ("season.", 633.6, 634.0),
+        ("Follow", 648.7, 649.0),
+        ("up", 649.0, 649.2),
+        ("first.", 649.2, 654.4),
+        ("Midlife", 654.4, 654.8),
+        ("brings", 654.8, 655.2),
+        ("changes.", 655.2, 656.5),
+        ("Your", 656.5, 656.8),
+        ("turn.", 656.8, 661.4),
+        ("Find", 667.1, 667.4),
+        ("it", 667.4, 667.6),
+        ("on", 667.6, 667.8),
+        ("the", 667.8, 668.0),
+        ("NPR", 668.0, 668.3),
+        ("app.", 668.3, 672.8),
+        ("Head", 672.8, 673.1),
+        ("comes", 673.1, 673.4),
+        ("from", 673.4, 673.7),
+        ("NPR", 673.7, 674.0),
+        ("sponsor", 674.0, 674.4),
+        ("AARP.", 674.4, 675.0),
+    )
+    segments = [
+        SegmentSpan(622.4, 626.6, "It was fact checked by Sierra Wattas"),
+        SegmentSpan(626.6, 632.9, "of NPR."),
+        SegmentSpan(632.9, 638.2, "This election season you can streamline your news"),
+        SegmentSpan(648.7, 654.4, "Follow up first on the NPR app or wherever you get your podcasts."),
+        SegmentSpan(654.4, 656.5, "Midlife brings a lot of changes."),
+        SegmentSpan(656.5, 661.4, "Your turn with Alas and Aubrey is a new podcast"),
+        SegmentSpan(661.4, 667.1, "From health and relationships to creativity and purpose"),
+        SegmentSpan(667.1, 672.8, "With your turn, find it on the NPR app or wherever you get your podcasts."),
+        SegmentSpan(672.8, 675.0, "Head comes from NPR sponsor AARP."),
+    ]
+    ad = QuoteAd(
+        start_quote="Head comes from NPR sponsor AARP",
+        end_quote="Head comes from NPR sponsor AARP",
+        content_type="promotional_external",
+        confidence=0.95,
+    )
+    matches = resolve_ads(
+        [ad],
+        words,
+        segments,
+        chunk_start=672.8,
+        chunk_end=675.0,
+        stop_before=652.485,
+    )
+    assert matches[0].dropped is False
+    assert matches[0].method == "word"
+    assert abs(matches[0].start - 654.4) < 1e-6
+    assert abs(matches[0].end - 675.0) < 1e-6
+    assert matches[0].start >= 652.485
+
+
+def test_start_only_back_stops_at_prior_match() -> None:
+    words = _words(
+        ("show", 640.0, 640.5),
+        ("content.", 640.5, 641.0),
+        ("This", 641.0, 641.3),
+        ("week", 641.3, 641.6),
+        ("on", 641.6, 641.9),
+        ("Sister.", 641.9, 650.0),
+        ("Head", 650.0, 650.3),
+        ("comes", 650.3, 650.6),
+        ("from", 650.6, 650.9),
+        ("AARP.", 650.9, 652.0),
+    )
+    segments = [
+        SegmentSpan(640.0, 641.0, "show content."),
+        SegmentSpan(641.0, 650.0, "This week on Sister Show wherever you get your podcasts."),
+        SegmentSpan(650.0, 652.0, "Head comes from NPR sponsor AARP."),
+    ]
+    ad = QuoteAd(
+        start_quote="Head comes from NPR sponsor AARP",
+        end_quote="Head comes from NPR sponsor AARP",
+        content_type="promotional_external",
+        confidence=0.95,
+    )
+    matches = resolve_ads(
+        [ad],
+        words,
+        segments,
+        chunk_start=650.0,
+        chunk_end=652.0,
+        stop_before=641.0,
+    )
+    assert matches[0].start == 641.0
+    assert matches[0].end == 652.0
+
+
 def test_start_only_grows_through_adjacent_segments() -> None:
     words = _words(
         ("this", 1921.8, 1922.2),

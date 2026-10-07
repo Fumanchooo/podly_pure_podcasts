@@ -167,6 +167,7 @@ class QuoteAnchorClassifier:
             w0, w1 = word_index_range(
                 loaded, max(0.0, chunk_start - 1.0), chunk_end + 1.0
             )
+            prior_end = max((item.end for item in matches), default=None)
             chunk_matches = resolve_ads(
                 ads,
                 loaded,
@@ -175,6 +176,7 @@ class QuoteAnchorClassifier:
                 chunk_end=chunk_end,
                 word_from=w0,
                 word_to=w1,
+                stop_before=prior_end,
             )
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
