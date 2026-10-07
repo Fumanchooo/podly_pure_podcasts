@@ -260,13 +260,13 @@ def test_dai_bed_after_voicemail_bye_pulls() -> None:
         ("Peter.", 439.7, 440.2),
     )
     start, end = refine_quote_span(words, 435.98, 440.2)
-    assert abs(start - 426.8) < 1e-6
+    assert start == 435.98
     assert end == 440.2
-    off_start, off_end = refine_quote_span(
-        words, 435.98, 440.2, pull_dai_bed=False
+    on_start, on_end = refine_quote_span(
+        words, 435.98, 440.2, pull_dai_bed=True
     )
-    assert off_start == 435.98
-    assert off_end == 440.2
+    assert abs(on_start - 426.8) < 1e-6
+    assert on_end == 440.2
 
 
 def test_credits_nine_second_hole_does_not_pull() -> None:

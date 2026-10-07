@@ -534,7 +534,7 @@ def run_quote_anchor_production_cut(
     transcripts_dir: Path | None = None,
     require_llm_cache: bool = False,
     prefer_transcript_segments: bool = True,
-    pull_dai_bed: bool = True,
+    pull_dai_bed: bool = False,
 ) -> dict[str, Any]:
     """Integrated quote-anchor classify + AudioProcessor merge/snap.
 

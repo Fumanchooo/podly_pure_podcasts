@@ -1,121 +1,70 @@
-# Quote-anchor live deploy gate (2026-10-05/06)
+# Quote-anchor live deploy gate (2026-10-07)
 
 `enable_quote_anchor_boundaries` stays **false**. Scout confirm stays **false**.
 `general_podcast_ads` remains **LOCKED**. Live `podly.service` left at `20ed084`.
 
-Holdout constants were **not** retuned for the deploy gate. The 8–12s DAI-bed
-pull below is **now-seen** (motivated by this holdout debug) and does not
-reopen the gate.
+Structural path (this table): LLM sees **segment** Whisper text (no timestamps).
+Words are matcher-only, with fail-closed **segment-edge** then chunk fallback when
+the quote is missing from the word stream. 8–12s DAI-bed pull is **off** (no
+original-10 lift; holdout structural identical with or without it).
 
-## Original 10 (integrated pipeline)
+Holdout is **now-seen** (debug + label fix + structural LLM source) and does
+not reopen the original-10 gate.
 
-Cached words + `llm_cache_v2`. Cutter path: prompt_v2 → in-order match → lexical_v2 → ±2s snap.
+## Scorecard (one table)
 
-| | inner catch | openings | not_ad | edge | input tok/ep |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| baseline | 96.52% | 7/7 | 2.72s | 26.43s | 23525.9 |
-| quote-anchor | 96.52% | 7/7 | 0.00s | 25.95s | 20473.2 |
+| set | system | inner catch | openings | not_ad | edge | input tok/ep |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| original 10 | baseline | 96.52% | 7/7 | 2.72s | 26.43s | 23526 |
+| original 10 | quote-anchor (structural) | 95.09% | 7/7 | 0.00s | 32.34s | 22578 |
+| holdout now-seen, corrected label | baseline | 98.93% | 3/3 | 0.00s | 22.38s | 29174 |
+| holdout now-seen, corrected label | quote-anchor (structural) | 98.71% | 3/3 | 0.00s | 10.35s | 30049 |
 
-Original-10 gate: **pass** (catch ≥96.5%, openings 7/7, not_ad ≤2.7s, edge ≤26.4s, tokens ≤ baseline). Unchanged after the 8–12s DAI-bed pull (Planet Money 1921 closer exemption holds; start stays 1921.38).
+Original-10 gate (catch ≥96.5%, openings 7/7, not_ad ≤2.7s, edge ≤26.4s, tokens ≤ baseline): **fail** (inner −1.43 pp, edge +5.91s). Tokens OK.
 
-Replay wall (no Whisper): 1.88s/episode. Gemini **$0**.
+Holdout gate (no worse than baseline catch / not_ad within 1 pp): **pass** (−0.22 pp catch; not_ad tied at 0s / 617s pool). Flagged now-seen.
 
-## Holdout (untouched; 4 shows) — deploy gate
-
-Shows: Marketplace (underwriting), Bill Simmons (DAI + host-read), The Indicator (NPR underwriting/membership), This American Life (membership + DAI). How I Built This download failed (`IncompleteRead`); not scored.
-
-| | inner catch | openings | not_ad | edge |
-| --- | ---: | ---: | ---: | ---: |
-| baseline | 93.39% | 3/3 | 0.00s | 36.38s |
-| quote-anchor | 87.58% | 3/3 | 0.00s | 38.35s |
-
-Holdout gate (no worse than baseline catch / not_ad within 1 pp): **fail** (−5.82 pp catch; not_ad tied at 0s).
-
-Per-show inner catch (**untouched**, pre DAI-bed):
+Holdout per-show inner (corrected label; structural; DAI-bed off):
 
 | show | baseline | quote-anchor | Δ |
 | --- | ---: | ---: | ---: |
 | marketplace | 0.00% (no labeled ads) | 0.00% | 0.00 |
 | bill_simmons | 99.36% | 98.95% | −0.41 |
-| npr_indicator | 83.63% | 68.86% | −14.77 |
+| npr_indicator | 97.80% | 97.52% | −0.28 |
 | this_american_life | 99.68% | 99.68% | 0.00 |
 
-Differentiator is NPR Indicator 422.2–461.1 inner (not 370.8–398.8). Quotes never silently dropped.
+Quotes never silently dropped. Original 10: 41 quotes (35 word / 5 segment_fallback / 1 chunk_fallback). Holdout: 21 (15 / 6 / 0). NPR Indicator Wise+donate is `segment_fallback` **404.36–459.36**, cut **400.08–459.28** (covers inner 422.2–461.1).
 
-## NPR Indicator debug (cached words + LLM; $0)
+## Word-drop audit ($0; 14 shows)
 
-### 422.2–474.9 (judge inner 422.2–461.1) — the real loss
+Holes ≥5s where segment Whisper has speech and `word_timestamps=True` has none:
 
-Segment Whisper (baseline / live LLM source) has the full stacked break:
-
-- 404.36–419.36 Wise underwriting
-- 419.36–433.36 donate.npr.org membership
-- 439.36–459.36 Wait Wait sister-show (Peter Sagal)
-
-Word-timestamp Whisper **drops** Wise+donate: 20.12s hole 401.24–421.36, then misplaced `Thank you so much. Bye-bye.` at 421.36–426.80, then 9.18s hole 426.80–435.98, then Peter at 435.98.
-
-Cached Gemini outputs for this chunk:
-
-| LLM source | `start_quote` | `end_quote` |
-| --- | --- | --- |
-| word-derived segs (eval path that scored the miss) | `Hey it's me Peter Seggel host` | `or wherever you get your podcasts` |
-| segment transcript (also cached) | `This message comes from Wise, the smart` | `wherever you get your podcasts` |
-
-Peter quote **matcher before lexical_v2**: word hit `Hey, it's me, Peter Seggel. host` **435.98–440.48** through `or wherever you get your podcasts.` **455.62–457.76**. Method `word`. Span **435.98–457.76**.
-
-Per-rule after that span:
-
-| rule | applied? | span |
-| --- | --- | --- |
-| pause / lead-in forward-trim | **no** (`is_lead=False`, no `LEADIN_RE` after the 2.88s pause at 439.30) | 435.98–457.76 |
-| 12s hole pull | **no** (pre-quote hole 9.18s < 12s) | 435.98–457.76 |
-| CTA tail | **no** | 435.98–457.76 |
-| ±2s silence snap | start 435.98 → **436.23** | cut 436.23–459.282 |
-
-Root cause: **LLM quoted mid-ad** because the word-seg excerpt omitted Wise+donate. Not a matcher miss. **Not** the Wait Wait forward-trim.
-
-Baseline cut 404.336–459.282 covers 37.08s of the 38.9s inner. Quote-anchor 436.23 start covers ~23s (−14s lead-in).
-
-If the Wise quote is matched against **segment** spans in-chunk, fail-closed `segment_fallback` is **404.36–459.36** (covers the inner). Word-stream in-chunk cannot find `This message comes from Wise` (that copy only exists at post-roll ~3340s).
-
-### 370.8–398.8 — both miss; label is wrong
-
-Judge: `is_ad=true`, `educational/self_promo`, inner **384.8–398.8**. Baseline 0s, quote-anchor 0s.
-
-Transcript (word stream): *Yes, hello, my name is Janis Beck. I live in Yvokuni, Japan. True line is one of the best. … I wait each week for a new episode, and I'm never disappointed. Keep on doing it, please.*
-
-This is **listener voicemail praising Throughline**, not membership, underwriting, or a sister-show promo. Neither classifier flagged it because it is show content. Policy counts self-promo / network promos / membership asks as ads; listener mail does not qualify. The gold inner is over-inclusive.
-
-## Proposed fixes
-
-1. **422 (tested $0 lexical):** pull start across an 8–12s wordless hole unless the previous sentence matches `CLOSER_RE` (Planet Money 1921 `thanks for listening` + 9.9s). Recovers 435.98 → 426.80 (the DAI bed). Remaining inner miss is 422.2–426.8 (~4.6s of donate still absent from the word stream).
-2. **422 (structural, wired, not $0-replayed on original 10 prompts):** keep LocalWhisper at `word_timestamps=False` so the LLM sees DAI copy; load words only in `QuoteAnchorClassifier.load_words`; fail-closed segment-edge when the word stream omits the midroll. Original-10 `llm_cache_v2` keys are word-seg prompts, so this path was not replayed there.
-3. **370:** no cutter change. Do not treat this window as a quote-anchor miss.
-
-## Holdout **NOW-SEEN** (DAI-bed 8–12s; not a deploy-gate)
-
-| | inner catch | openings | not_ad | edge |
+| | holes | segment-speech in holes | holes overlapping labeled ads | labeled-ad audio in holes |
 | --- | ---: | ---: | ---: | ---: |
-| baseline | 93.39% | 3/3 | 0.00s | 36.38s |
-| quote-anchor | 91.35% | 3/3 | 0.00s | 28.91s |
+| all 14 | 98 | 646.0s | 6 | 34.43s |
+| original 10 | 46 | 313.3s | 3 | 27.19s |
+| holdout | 52 | 332.7s | 3 | 7.24s |
 
-Still fails the 1 pp catch gate (−2.04 pp). Gemini **$0**.
+Word-mode dropping speech is **systemic** (98 holes / 646s). Labeled-ad overlap is sparse. Largest labeled hit: Up First **865.4–887.1** (19.1s). Indicator Wise+donate **401.24–421.36** (19.1s segment speech) is a word hole but **unlabeled** (gold inner starts 422.2); the 9.18s hole **426.80–435.98** overlaps 6.56s of labeled inner.
 
-Per-show inner (now-seen):
+## Label fix ($0)
 
-| show | baseline | quote-anchor | Δ |
-| --- | ---: | ---: | ---: |
-| marketplace | 0.00% | 0.00% | 0.00 |
-| bill_simmons | 99.36% | 98.95% | −0.41 |
-| npr_indicator | 83.63% | 78.63% | −5.00 |
-| this_american_life | 99.68% | 99.68% | 0.00 |
-
-NPR 422 inner coverage after DAI-bed: baseline 37.08s, quote-anchor 32.48s (cut 426.8–459.282). NPR 370 inner: 0s both.
+Indicator **384.8–398.8** (window 370.8–398.8) listener voicemail (Janis Beck praising Throughline) is **not_ad** under `general_podcast_ads`. Reason recorded on the window in holdout `labels.json` (`label_reason` + `original_judge`). After the fix, not_ad pool is 617s and not_ad cut is 0s on both systems. Word-path after the fix was 98.93 vs 96.76 (−2.16); structural recovers to −0.22.
 
 ## Spend / flags
 
-This debug: Gemini **$0** (cached words + `llm_cache_v2`). Flag remains false. Live remains `20ed084`.
+| item | Gemini $ |
+| --- | ---: |
+| word-drop audit | $0 |
+| label fix + rescore | $0 |
+| original 10 structural (UTC 2026-10-07) | $0.178 |
+| original 10 DAI-bed A/B | $0 (cache; identical) |
+| holdout structural nodai | $0 (cache) |
+| UTC-day remaining after original 10 | ~$0.322 |
+
+DAI-bed 8–12s (closer exemption) **does not help** the original 10, so production default is **false**. Flag remains false. Live remains `20ed084`.
 
 ## Verdict
 
 Do **not** enable `ENABLE_QUOTE_ANCHOR_BOUNDARIES` on live. Rollback identity unchanged: `20ed084`.
+`general_podcast_ads` remains **LOCKED**.

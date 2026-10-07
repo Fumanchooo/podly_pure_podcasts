@@ -95,7 +95,7 @@ TUNE_NOTES = (
     ),
     LexicalTuneNote(
         "pull_start_across_dai_bed_8_to_12s",
-        "holdout npr_indicator 422 (9s wordless DAI bed before Wait Wait; now-seen)",
+        "holdout npr_indicator 422 (9s wordless DAI bed before Wait Wait; now-seen; default off — no original-10 lift)",
         "a_missed_leadin",
     ),
     LexicalTuneNote(
@@ -157,7 +157,7 @@ def refine_quote_span(
     max_forward_s: float = MAX_FORWARD_S,
     min_hole_s: float = MIN_LONG_HOLE_S,
     max_hole_s: float = MAX_HOLE_PULL_S,
-    pull_dai_bed: bool = True,
+    pull_dai_bed: bool = False,
 ) -> tuple[float, float]:
     """Trim show lead-in; pull start across a pre-quote hole; eat wordless CTA tails."""
     if not words or end <= start:
@@ -291,7 +291,7 @@ def lexical_cuts_from_matches(
     gaps: list[tuple[float, float]] | None = None,
     *,
     asymmetric_end: bool = False,
-    pull_dai_bed: bool = True,
+    pull_dai_bed: bool = False,
 ) -> list[tuple[float, float]]:
     cuts: list[tuple[float, float]] = []
     for item in matches:

@@ -259,7 +259,7 @@ def main() -> int:
                     skip_audio_clip=True,
                     require_llm_cache=os.environ.get("QA_REQUIRE_LLM_CACHE", "1") != "0",
                     prefer_transcript_segments=os.environ.get("QA_SEGMENT_LLM", "1") != "0",
-                    pull_dai_bed=os.environ.get("QA_DAI_BED", "1") != "0",
+                    pull_dai_bed=os.environ.get("QA_DAI_BED", "0") == "1",
                 )
                 walls_qa[show_id] = float(
                     quote_prod[show_id].get("wall_s")

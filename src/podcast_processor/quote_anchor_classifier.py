@@ -99,7 +99,7 @@ class QuoteAnchorClassifier:
         llm_cache_dir: Path | None = None,
         whisper_model: str = "base",
         require_llm_cache: bool = False,
-        pull_dai_bed: bool = True,
+        pull_dai_bed: bool = False,
     ) -> None:
         self.config = config
         self.logger = logger or logging.getLogger("global_logger")
