@@ -1,10 +1,15 @@
 # Cake live Podly deploy (`podly.service`)
 
 Live checkout is `/home/jdr/cursor/repos/podly_pure_podcasts` (systemd
-`WorkingDirectory`). The experiment branch `cursor/opening-fn-2026-10-05` is
-checked out in the scorecard worktree `/home/jdr/cursor/repos/podly_scorecard`,
-so the live dir uses a detached commit (git refuses the same branch in two
-worktrees).
+`WorkingDirectory`). The experiment branch is checked out in the scorecard
+worktree `/home/jdr/cursor/repos/podly_scorecard`, so the live dir uses a
+detached commit (git refuses the same branch in two worktrees).
+
+Current live (2026-10-07): detached `cursor/startonly-back-2026-10-07-6afb`
+with `ENABLE_QUOTE_ANCHOR_BOUNDARIES=true`. See
+`QUOTE_ANCHOR_DEPLOY_GATE.md` and `STARTONLY_BACK_2026-10-07.md`. Increment
+rollback: `git checkout --detach f252799` (keep the flag). Quote-anchor off:
+unset the flag and `git checkout --detach 20ed084`.
 
 `enable_bow_scout_gemini_confirm` stays **false** (code default; not in
 `.env.local`). Do not set it.

@@ -4,8 +4,13 @@ Scout confirm stays **false**. `general_podcast_ads` remains **LOCKED**.
 
 Original-10 gates **pass**. Live `podly.service` is switched to this experiment
 commit with `ENABLE_QUOTE_ANCHOR_BOUNDARIES=true` in `.env.local` (code default
-stays false). Rollback identity is still `20ed084` if the flag is unset and
-the live checkout is detached there again.
+stays false). Increment rollback is `f252799` (keep the flag). Full
+quote-anchor rollback is still `20ed084` if the flag is unset and the live
+checkout is detached there again.
+
+2026-10-07 afternoon: start-only **backward** pack across leftover EOF
+chunks (`STARTONLY_BACK_2026-10-07.md`). Scorecard cut-list identity vs
+`f252799`; live fixture is today’s Indicator AARP stub.
 
 Structural path: LLM sees **segment** Whisper text (no timestamps). Words are
 matcher-only. 8–12s DAI-bed pull is **off**. Holdout is **now-seen**.
@@ -73,6 +78,7 @@ Scout **false**.
 ## Verdict
 
 Enable `ENABLE_QUOTE_ANCHOR_BOUNDARIES` on live via `.env.local`. Detach
-`podly.service` to this experiment commit. Rollback: unset the env flag and
-`git checkout --detach 20ed084`.
+`podly.service` to this experiment commit. Rollback this increment:
+`git checkout --detach f252799` (keep the flag). Full quote-anchor
+rollback: unset the env flag and `git checkout --detach 20ed084`.
 `general_podcast_ads` remains **LOCKED**.
