@@ -24,6 +24,35 @@ def test_normalize_and_edit_distance() -> None:
     assert token_edit_distance(["a", "b", "c"], ["a", "x", "c"]) == 1
 
 
+def test_url_and_spellout_tokens_match_quote() -> None:
+    """Lexicon lock keeps Shopify.com / S-I-N-C-H as one word; still match."""
+    shop = _words(
+        ("That's", 1930.89, 1931.33),
+        ("Shopify.com.", 1931.33, 1932.03),
+        ("Go", 1932.03, 1932.40),
+        ("to", 1932.40, 1932.55),
+        ("Shopify.com", 1932.55, 1933.20),
+        ("today", 1933.20, 1933.60),
+    )
+    hit = match_quote_tokens(shop, "That's Shopify.com. Go to Shopify.com today")
+    assert hit is not None
+    assert shop[hit[0]].word == "That's"
+    assert shop[hit[1] - 1].word == "today"
+    assert hit[2] >= 0.99
+
+    spelled = _words(
+        ("that's", 2686.6, 2686.9),
+        ("spelled", 2686.9, 2687.2),
+        ("S-I-N-C-H", 2687.2, 2688.4),
+        ("SINCH.com.", 2688.4, 2689.3),
+    )
+    end = match_quote_tokens(spelled, "that's spelled S-I-N-C-H SINCH.com.")
+    assert end is not None
+    assert spelled[end[0]].word == "that's"
+    assert spelled[end[1] - 1].word == "SINCH.com."
+    assert end[2] >= 0.99
+
+
 def test_exact_quote_match() -> None:
     words = _words(
         ("hello", 0.0, 0.3),

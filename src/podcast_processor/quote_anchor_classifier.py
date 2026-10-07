@@ -25,6 +25,7 @@ from app.writer.client import writer_client
 from podcast_processor.boundary_snap import detect_silence_gaps, interpolate_word_times
 from podcast_processor.experiments.word_transcripts import (
     payload_is_aligned,
+    reanchor_words_to_speech,
     transcribe_word_timestamps,
     words_from_payload,
 )
@@ -138,6 +139,8 @@ class QuoteAnchorClassifier:
 
         loaded = words if words is not None else self.load_words(post, transcript_segments)
         spans = segments_to_spans(transcript_segments)
+        gaps = self._silence_gaps(post)
+        loaded = reanchor_words_to_speech(loaded, spans, gaps)
         matches: list[QuoteMatch] = []
         idx = 0
         while idx < len(transcript_segments):
@@ -180,7 +183,6 @@ class QuoteAnchorClassifier:
             matches.extend(chunk_matches)
             idx += len(chunk)
 
-        gaps = self._silence_gaps(post)
         cuts = lexical_cuts_from_matches(
             matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
         )

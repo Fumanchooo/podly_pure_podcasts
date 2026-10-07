@@ -100,11 +100,13 @@ def match_quote_tokens(
     needle = normalize_tokens(quote)
     if len(needle) < MIN_QUOTE_TOKENS:
         return None
+    # Every alphanumeric piece in the word (Shopify.com → shopify, com;
+    # S-I-N-C-H → s,i,n,c,h). Using only parts[0] dropped URL/spell-out
+    # quotes after lexicon lock kept those as single tokens.
     tokens: list[tuple[int, str]] = []
     for idx, word in enumerate(words):
-        parts = normalize_tokens(word.word)
-        if parts:
-            tokens.append((idx, parts[0]))
+        for part in normalize_tokens(word.word):
+            tokens.append((idx, part))
     lo = 0
     while lo < len(tokens) and tokens[lo][0] < search_from:
         lo += 1

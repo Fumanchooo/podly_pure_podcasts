@@ -24,6 +24,10 @@ ALIGNED_BACKEND = "segment_align"
 ALIGN_WINDOW_S = 28.0
 ALIGN_PAD_S = 0.25
 MAX_ALIGN_AUDIO_S = 29.9
+MIN_SPEECH_SILENCE_S = 0.8
+STRETCH_MEAN_WORD_S = 0.7
+PACK_WORD_S = 0.35
+MIN_LEAD_BED_S = 2.0
 SegmentRow = tuple[float, float, str]
 
 
@@ -207,18 +211,27 @@ def lexicon_words_for_segment(
         if b - a > 2.5 or b < start - 0.25 or a > end + 0.25:
             continue
         sane.append({"word": str(row.get("word") or "").strip(), "start": a, "end": b})
-    if len(sane) != len(expected):
+    if len(sane) == len(expected):
+        out: list[dict[str, Any]] = []
+        prev = start
+        for span, row in zip(expected, sane, strict=True):
+            a = max(prev, float(row["start"]))
+            b = float(row["end"])
+            if b <= a:
+                b = a + max(0.02, span.end - span.start)
+            out.append({"word": span.word, "start": a, "end": b})
+            prev = b
+        return out
+    # Count mismatch: keep lexicon labels but time them on the DTW speech
+    # span, not the full Whisper segment (which often includes a music bed).
+    t0 = max(start, min(float(row["start"]) for row in sane))
+    t1 = min(end, max(float(row["end"]) for row in sane))
+    if t1 - t0 < 0.05:
         return linear
-    out: list[dict[str, Any]] = []
-    prev = start
-    for span, row in zip(expected, sane, strict=True):
-        a = max(prev, float(row["start"]))
-        b = float(row["end"])
-        if b <= a:
-            b = a + max(0.02, span.end - span.start)
-        out.append({"word": span.word, "start": a, "end": b})
-        prev = b
-    return out
+    return [
+        {"word": span.word, "start": span.start, "end": span.end}
+        for span in interpolate_word_times(t0, t1, text)
+    ]
 
 
 def lock_words_to_segment_lexicon(
@@ -244,6 +257,163 @@ def lock_words_to_segment_lexicon(
         locked.extend(lexicon_words_for_segment(start, end, text, dtw_words=bucket))
     locked.sort(key=lambda item: (float(item["start"]), float(item["end"])))
     return locked
+
+
+def speech_intervals(
+    start: float,
+    end: float,
+    gaps: list[tuple[float, float]],
+    *,
+    min_sil: float = MIN_SPEECH_SILENCE_S,
+) -> list[tuple[float, float]]:
+    """[start, end] minus silences of at least min_sil."""
+    sils: list[tuple[float, float]] = []
+    for g0, g1 in gaps:
+        a = max(start, float(g0))
+        b = min(end, float(g1))
+        if b - a >= min_sil:
+            sils.append((a, b))
+    sils.sort()
+    intervals: list[tuple[float, float]] = []
+    cursor = float(start)
+    for a, b in sils:
+        if a > cursor:
+            intervals.append((cursor, a))
+        cursor = max(cursor, b)
+    if end > cursor:
+        intervals.append((cursor, float(end)))
+    return intervals
+
+
+def _map_onto_intervals(u: float, intervals: list[tuple[float, float]]) -> float:
+    acc = 0.0
+    for a, b in intervals:
+        dur = b - a
+        if acc + dur >= u:
+            return a + (u - acc)
+        acc += dur
+    return intervals[-1][1]
+
+
+def _place_tokens_on_intervals(
+    tokens: list[str], intervals: list[tuple[float, float]]
+) -> list[WordTiming]:
+    total = sum(b - a for a, b in intervals)
+    if not tokens or total <= 0:
+        return []
+    n = len(tokens)
+    out: list[WordTiming] = []
+    for i, token in enumerate(tokens):
+        t0 = _map_onto_intervals(total * i / n, intervals)
+        t1 = _map_onto_intervals(total * (i + 1) / n, intervals)
+        if t1 <= t0:
+            t1 = t0 + 0.02
+        out.append(WordTiming(word=token, start=t0, end=t1))
+    last = out[-1]
+    out[-1] = WordTiming(word=last.word, start=last.start, end=intervals[-1][1])
+    return out
+
+
+def _seg_start_end(seg: Any) -> tuple[float, float]:
+    if isinstance(seg, tuple):
+        return float(seg[0]), float(seg[1])
+    return float(seg.start), float(seg.end)
+
+
+def reanchor_words_to_speech(
+    words: list[WordTiming],
+    segments: list[Any],
+    gaps: list[tuple[float, float]] | None = None,
+) -> list[WordTiming]:
+    """Pull linearly stretched words off music beds and restore pause holes.
+
+    Whisper segment times often include a DAI/music bed. When DTW count
+    mismatches we interpolated across that bed (Threat Locker 465–475,
+    Planet Money 1215 pause). $0 post-process: pack leading-bed stretches
+    at the segment tail, and redistribute off ≥0.8s silences.
+    """
+    if not words or not segments:
+        return words
+    gap_rows = [(float(a), float(b)) for a, b in (gaps or [])]
+    bounds = [_seg_start_end(seg) for seg in segments]
+    assigned: list[list[WordTiming]] = [[] for _ in segments]
+    leftover: list[WordTiming] = []
+    j = 0
+    n_seg = len(bounds)
+    for word in words:
+        while j < n_seg and bounds[j][1] <= word.start:
+            j += 1
+        best_i = -1
+        best_ov = 0.0
+        for k in range(max(0, j - 1), min(n_seg, j + 3)):
+            start, end = bounds[k]
+            ov = min(word.end, end) - max(word.start, start)
+            if ov > best_ov:
+                best_ov = ov
+                best_i = k
+        if best_i >= 0 and best_ov > 0:
+            assigned[best_i].append(word)
+        else:
+            leftover.append(word)
+
+    out: list[WordTiming] = list(leftover)
+    prev_end: float | None = None
+    for i, seg in enumerate(segments):
+        bucket = assigned[i]
+        if not bucket:
+            continue
+        start, end = _seg_start_end(seg)
+        intervals = speech_intervals(start, end, gap_rows)
+        span = bucket[-1].end - bucket[0].start
+        mean = span / float(len(bucket))
+        leading_bed = (
+            mean >= STRETCH_MEAN_WORD_S
+            and prev_end is not None
+            and (bucket[0].start - prev_end) >= MIN_LEAD_BED_S
+        )
+        silence_hit = False
+        if intervals and gap_rows:
+            for word in bucket:
+                for a, b in gap_rows:
+                    if (b - a) >= MIN_SPEECH_SILENCE_S and (
+                        min(word.end, b) - max(word.start, a) > 0.12
+                    ):
+                        silence_hit = True
+                        break
+                if silence_hit:
+                    break
+        if leading_bed:
+            packed = PACK_WORD_S * len(bucket)
+            t1 = end
+            t0 = max(start, t1 - packed)
+            if intervals:
+                last_a, last_b = intervals[-1]
+                packed = min(last_b - last_a, packed)
+                if packed >= 0.15:
+                    t1 = last_b
+                    t0 = max(last_a, t1 - packed)
+            bucket = _place_tokens_on_intervals(
+                [word.word for word in bucket], [(t0, t1)]
+            )
+        elif silence_hit and intervals:
+            use = intervals
+            last_dur = intervals[-1][1] - intervals[-1][0]
+            first_dur = intervals[0][1] - intervals[0][0]
+            # Trailing bed/pause: don't sprinkle leftover tokens after the hole.
+            if (
+                len(intervals) >= 2
+                and last_dur < 3.0
+                and last_dur < 0.5 * max(first_dur, 0.01)
+            ):
+                use = intervals[:-1]
+            bucket = _place_tokens_on_intervals(
+                [word.word for word in bucket], use
+            )
+        out.extend(bucket)
+        if bucket:
+            prev_end = bucket[-1].end
+    out.sort(key=lambda item: (item.start, item.end))
+    return out
 
 
 def align_words_to_segments(
