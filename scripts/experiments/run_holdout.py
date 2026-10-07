@@ -253,7 +253,8 @@ def main() -> int:
                     app=qa_app,
                     transcriber=transcriber,
                     tracker=tracker,
-                    words_cache=WORDS / f"{show_id}.json",
+                    words_cache=Path(os.environ.get("QA_WORDS_DIR") or str(WORDS))
+                    / f"{show_id}.json",
                     llm_cache_dir=LLM_CACHE,
                     transcripts_dir=OUT / "baseline" / "transcripts",
                     skip_audio_clip=True,

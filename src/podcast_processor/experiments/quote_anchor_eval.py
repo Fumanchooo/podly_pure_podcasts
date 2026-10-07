@@ -42,6 +42,7 @@ from podcast_processor.experiments.cost_model import ModelPrices, usd_for_tokens
 from podcast_processor.experiments.gemini_confirm import estimate_tokens_from_text
 from podcast_processor.experiments.word_transcripts import (
     load_word_payload,
+    payload_is_aligned,
     segments_from_payload,
     transcribe_word_timestamps,
     words_from_payload,
@@ -476,7 +477,7 @@ def run_quote_anchor_eval(
         word_cache = words_dir / f"{show_id}.json"
         payload = load_word_payload(word_cache)
         words: list[WordTiming] = []
-        if payload and payload.get("word_timestamps") and payload.get("words"):
+        if payload and payload.get("words") and payload_is_aligned(payload):
             words = words_from_payload(payload)
         if not words:
             if skip_transcribe:

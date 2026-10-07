@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare word_timestamps=True holes vs segment Whisper speech ($0)."""
+"""Compare word-timing holes vs segment Whisper speech ($0)."""
 
 from __future__ import annotations
 
@@ -145,6 +145,17 @@ def audit_show(
 
 
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--orig-words", type=Path, default=ORIG_WORDS)
+    parser.add_argument("--hold-words", type=Path, default=HOLD / "words")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=HOLD.parent / "word_drop_audit.json",
+    )
+    args = parser.parse_args()
     orig_labels = _load_json(ORIG_LABELS)
     hold_labels = _load_json(HOLD / "labels.json")
     orig_windows = list(orig_labels.get("windows") or [])
@@ -154,7 +165,7 @@ def main() -> int:
         rows.append(
             audit_show(
                 sid,
-                ORIG_WORDS / f"{sid}.json",
+                args.orig_words / f"{sid}.json",
                 ORIG_SEGS / f"{sid}.json",
                 _gold_spans(orig_windows, sid),
             )
@@ -166,7 +177,7 @@ def main() -> int:
         rows.append(
             audit_show(
                 sid,
-                HOLD / "words" / f"{sid}.json",
+                args.hold_words / f"{sid}.json",
                 segs,
                 _gold_spans(hold_windows, sid),
             )
@@ -210,7 +221,7 @@ def main() -> int:
             if hole["ad_s"] > 0 or hole["speech_s"] >= 8.0
         ],
     }
-    out = HOLD.parent / "word_drop_audit.json"
+    out = args.out
     out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0

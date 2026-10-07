@@ -75,6 +75,11 @@ def parse_args() -> argparse.Namespace:
         default=False,
     )
     parser.add_argument("--prior-usd", type=float, default=0.0)
+    parser.add_argument(
+        "--words-dir",
+        default="",
+        help="Word-timing cache dir (default: quote-anchor/words-aligned).",
+    )
     return parser.parse_args()
 
 
@@ -154,6 +159,9 @@ def main() -> int:
         return audio.stat().st_size if audio.is_file() else 1 << 62
 
     scored.sort(key=_size)
+    words_dir = Path(args.words_dir) if args.words_dir else RUN / "words-aligned"
+    if not words_dir.is_absolute():
+        words_dir = REPO / words_dir
     baseline_cuts = _baseline_snapped()
     baseline = score_windows(
         [row for row in windows if not row.get("skipped") and row.get("show_id") in baseline_cuts],
@@ -194,7 +202,7 @@ def main() -> int:
                     app=app,
                     transcriber=transcriber,
                     tracker=tracker,
-                    words_cache=WORDS / f"{show_id}.json",
+                    words_cache=words_dir / f"{show_id}.json",
                     llm_cache_dir=LLM_CACHE,
                     skip_audio_clip=True,
                     transcripts_dir=AUDIO / "transcripts",

@@ -24,6 +24,7 @@ from app.models import ModelCall, Post, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.boundary_snap import detect_silence_gaps, interpolate_word_times
 from podcast_processor.experiments.word_transcripts import (
+    payload_is_aligned,
     transcribe_word_timestamps,
     words_from_payload,
 )
@@ -224,26 +225,38 @@ class QuoteAnchorClassifier:
         if cache is not None and cache.is_file():
             try:
                 payload = json.loads(cache.read_text(encoding="utf-8"))
-                words = words_from_payload(payload)
-                if words:
-                    return words
+                if payload_is_aligned(payload):
+                    words = words_from_payload(payload)
+                    if words:
+                        return words
             except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
                 self.logger.warning("unreadable word cache %s", cache, exc_info=True)
         if audio and Path(str(audio)).is_file() and cache is not None:
             os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
             started = time.time()
             try:
+                rows = [
+                    (
+                        float(seg.start_time or 0.0),
+                        float(seg.end_time or 0.0),
+                        str(seg.text or ""),
+                    )
+                    for seg in transcript_segments
+                    if str(seg.text or "").strip()
+                    and float(seg.end_time or 0.0) > float(seg.start_time or 0.0)
+                ]
                 words = transcribe_word_timestamps(
                     Path(str(audio)),
                     cache,
                     model_name=self.whisper_model,
+                    segments=rows or None,
                 )
                 self.last_word_whisper_s = time.time() - started
                 if words:
                     return words
             except Exception:  # noqa: BLE001
                 self.logger.exception(
-                    "word-timestamp whisper failed for post %s; interpolating",
+                    "segment word-align failed for post %s; interpolating",
                     post.id,
                 )
                 self.last_word_whisper_s = time.time() - started
