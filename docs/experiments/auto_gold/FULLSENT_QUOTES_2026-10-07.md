@@ -37,3 +37,13 @@ when off (prompt_v2, no leftover merge, no overlap). Live env stays
 Fold only if catch ≥ live, not_ad stays 0.00s, openings not worse, spend
 ≤ $0.50 UTC. Rollback if folded: `git checkout --detach e902c89` (keep
 `ENABLE_QUOTE_ANCHOR_BOUNDARIES=true`; unset the full-sentence flag).
+
+## Result (did not fold)
+
+Original-10 catch **90.03%** vs live **97.68%**. Planet Money 1270–1304
+(Ted Radio Hour + Fresh Air sister-shows) was truncated when the last-sentence
+quote ended at the first “listen on the NPR app” CTA (live cut 1217–1311,
+candidate 1217–1263). Openings stayed 7/7; not_ad stayed 0.00s. Holdout
+scorecard matched live (98.71%, 3/3, 0.00s, 10.35s) with different extra
+quotes outside gold windows. Gemini **$0.312** (UTC 2026-10-08; stale
+2026-10-05 ledger reset). Live `podly.service` remains detached `e902c89`.
