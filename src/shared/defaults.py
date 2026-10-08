@@ -24,6 +24,9 @@ ENABLE_BOW_SCOUT_GEMINI_CONFIRM = False
 # Quote-anchor cutter (prompt_v2 + lexical_v2). Default off until the
 # original-10 + holdout gates pass; live deploy flips this True.
 ENABLE_QUOTE_ANCHOR_BOUNDARIES = False
+# Full first/last sentence quotes + leftover-chunk merge/overlap. Default
+# off; live stays on short 5–8 word quotes until this is explicitly enabled.
+ENABLE_QUOTE_FULL_SENTENCE_QUOTES = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

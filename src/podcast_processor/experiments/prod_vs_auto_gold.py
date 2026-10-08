@@ -139,7 +139,11 @@ def assert_scout_off(config: Config) -> None:
         )
 
 
-def production_config(*, enable_quote_anchor_boundaries: bool = False) -> Config:
+def production_config(
+    *,
+    enable_quote_anchor_boundaries: bool = False,
+    enable_quote_full_sentence_quotes: bool = False,
+) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
     config = Config(
@@ -147,6 +151,7 @@ def production_config(*, enable_quote_anchor_boundaries: bool = False) -> Config
         llm_model=os.environ.get("LLM_MODEL") or DEFAULT_GEMINI_MODEL,
         enable_bow_scout_gemini_confirm=False,
         enable_quote_anchor_boundaries=enable_quote_anchor_boundaries,
+        enable_quote_full_sentence_quotes=enable_quote_full_sentence_quotes,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from podcast_processor.quote_anchor import (
     QuoteAd,
+    QuoteMatch,
     SegmentSpan,
     WordTiming,
+    dedupe_quote_matches,
     fallback_segment_edge,
     match_quote_tokens,
+    match_quote_with_fallbacks,
     match_quotes_in_order,
     match_rate,
     normalize_tokens,
+    quote_chunk_ranges,
     resolve_ads,
     token_edit_distance,
 )
@@ -467,3 +471,104 @@ def test_segment_fallback_when_dai_missing_from_word_stream() -> None:
     assert matches[0].method == "segment_fallback"
     assert matches[0].start == 404.36
     assert matches[0].end == 459.36
+
+
+def test_quote_chunk_ranges_merges_tiny_leftover() -> None:
+    assert quote_chunk_ranges(60, size=60, leftover_max=2, overlap=2) == [(0, 60)]
+    assert quote_chunk_ranges(61, size=60, leftover_max=2, overlap=2) == [(0, 61)]
+    assert quote_chunk_ranges(62, size=60, leftover_max=2, overlap=2) == [(0, 62)]
+    assert quote_chunk_ranges(63, size=60, leftover_max=2, overlap=2) == [
+        (0, 60),
+        (58, 63),
+    ]
+    assert quote_chunk_ranges(61, size=60, leftover_max=0, overlap=0) == [
+        (0, 60),
+        (60, 61),
+    ]
+
+
+def test_full_sentence_match_uses_first_and_last_word() -> None:
+    words = _words(
+        ("Support", 10.0, 10.3),
+        ("for", 10.3, 10.5),
+        ("this", 10.5, 10.7),
+        ("podcast", 10.7, 11.1),
+        ("comes", 11.1, 11.4),
+        ("from", 11.4, 11.6),
+        ("Acme.", 11.6, 12.0),
+        ("Visit", 20.0, 20.3),
+        ("acme.com/save", 20.3, 21.0),
+        ("today.", 21.0, 21.4),
+        ("Terms", 21.4, 21.7),
+        ("apply.", 21.7, 22.0),
+    )
+    ads = [
+        QuoteAd(
+            start_quote="Support for this podcast comes from Acme.",
+            end_quote="Terms apply.",
+            content_type="promotional_external",
+            confidence=0.95,
+        )
+    ]
+    ordered = match_quotes_in_order(words, ads, full_sentence=True)
+    assert ordered[0][1] is not None
+    i0, i1, score = ordered[0][1]
+    assert words[i0].word == "Support"
+    assert words[i1 - 1].word == "apply."
+    assert score >= 0.72
+
+
+def test_full_sentence_fallback_to_short_head_on_paraphrase() -> None:
+    words = _words(
+        ("Support", 1.0, 1.2),
+        ("for", 1.2, 1.4),
+        ("this", 1.4, 1.6),
+        ("podcast", 1.6, 2.0),
+        ("comes", 2.0, 2.3),
+        ("from", 2.3, 2.5),
+        ("Acme", 2.5, 2.9),
+        ("Insurance.", 2.9, 3.4),
+    )
+    paraphrased = (
+        "Support for this podcast comes from Acme Insurance and all their "
+        "wonderful partners around the country today."
+    )
+    hit = match_quote_with_fallbacks(words, paraphrased, tail=False)
+    assert hit is not None
+    assert words[hit[0]].word == "Support"
+
+
+def test_full_sentence_typo_first_token_still_matches() -> None:
+    words = _words(
+        ("Suport", 0.0, 0.3),
+        ("for", 0.3, 0.5),
+        ("this", 0.5, 0.7),
+        ("podcast", 0.7, 1.1),
+        ("comes", 1.1, 1.4),
+        ("from", 1.4, 1.6),
+        ("Acme.", 1.6, 2.0),
+    )
+    hit = match_quote_with_fallbacks(
+        words, "Support for this podcast comes from Acme.", tail=False
+    )
+    assert hit is not None
+    assert words[hit[0]].word == "Suport"
+
+
+def test_dedupe_overlapping_chunk_ads() -> None:
+    ad = QuoteAd(
+        start_quote="Head comes from NPR sponsor AARP",
+        end_quote="Head comes from NPR sponsor AARP",
+        content_type="promotional_external",
+        confidence=0.9,
+    )
+    first = QuoteMatch(ad=ad, start=654.4, end=672.8, method="word", score=0.9)
+    second = QuoteMatch(ad=ad, start=672.8, end=675.0, method="word", score=0.95)
+    # IoU of these abutting spans is 0 — overlap slightly
+    first = QuoteMatch(ad=ad, start=654.4, end=675.0, method="word", score=0.9)
+    second = QuoteMatch(ad=ad, start=654.4, end=675.0, method="segment_fallback", score=0.72)
+    kept = dedupe_quote_matches([first, second])
+    assert len(kept) == 1
+    assert kept[0].start == 654.4
+    assert kept[0].end == 675.0
+    assert kept[0].method == "word"

@@ -16,6 +16,7 @@ from podcast_processor.podcast_processor import (
     PodcastProcessor,
     quote_anchor_boundaries_enabled,
 )
+from podcast_processor.quote_anchor_classifier import quote_full_sentence_quotes_enabled
 from podcast_processor.quote_anchor import (
     QUOTE_ANCHOR_SOURCE,
     WordTiming,
@@ -90,6 +91,9 @@ def test_quote_anchor_flag_defaults_off() -> None:
     config = create_standard_test_config()
     assert config.enable_quote_anchor_boundaries is False
     assert quote_anchor_boundaries_enabled(config) is False
+    assert DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES is False
+    assert config.enable_quote_full_sentence_quotes is False
+    assert quote_full_sentence_quotes_enabled(config) is False
 
 
 def test_quote_anchor_flag_can_be_enabled() -> None:
@@ -282,3 +286,70 @@ def test_classifier_empty_ads_stores_quote_header(app: Flask) -> None:
         assert isinstance(payload, list)
         assert payload[0]["source"] == QUOTE_ANCHOR_SOURCE
         assert payload[0]["empty"] is True
+
+
+def test_full_sentence_merges_leftover_chunk(app: Flask) -> None:
+    with app.app_context():
+        post, _seed = _seed_post()
+        db.session.query(TranscriptSegment).filter_by(post_id=post.id).delete()
+        db.session.commit()
+        segments = []
+        for i in range(61):
+            if i < 59:
+                text = f"story beat number {i} continues here."
+            elif i == 59:
+                text = "This week on Your Turn find it on the NPR app."
+            else:
+                text = "Head comes from NPR sponsor AARP."
+            segments.append(
+                TranscriptSegment(
+                    post_id=post.id,
+                    sequence_num=i,
+                    start_time=float(i),
+                    end_time=float(i) + 0.9,
+                    text=text,
+                )
+            )
+        db.session.add_all(segments)
+        db.session.commit()
+        seen: list[int] = []
+
+        def complete(_system: str, user: str) -> str:
+            seen.append(user.count("\n") + 1)
+            if "Head comes from NPR sponsor AARP" in user:
+                assert "Your Turn" in user
+                return json.dumps(
+                    {
+                        "ads": [
+                            {
+                                "start_quote": (
+                                    "This week on Your Turn find it on the NPR app."
+                                ),
+                                "end_quote": "Head comes from NPR sponsor AARP.",
+                                "content_type": "educational/self_promo",
+                                "confidence": 0.95,
+                            }
+                        ]
+                    }
+                )
+            return '{"ads":[]}'
+
+        config = _quote_config().model_copy(
+            update={"enable_quote_full_sentence_quotes": True}
+        )
+        classifier = QuoteAnchorClassifier(
+            config=config,
+            db_session=db.session,
+            complete_fn=complete,
+        )
+        words = [
+            WordTiming(w, float(i) + 0.1, float(i) + 0.4)
+            for i, seg in enumerate(segments)
+            for w in (seg.text or "").split()
+        ]
+        cuts = classifier.classify(
+            transcript_segments=segments, post=post, words=words
+        )
+        assert len(seen) == 1
+        assert cuts
+        assert cuts[-1][1] >= 60.0

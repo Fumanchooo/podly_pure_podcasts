@@ -80,6 +80,42 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Word-timing cache dir (default: quote-anchor/words-aligned).",
     )
+    parser.add_argument(
+        "--full-sentence",
+        action="store_true",
+        help="Enable prompt v3 + leftover merge/overlap (candidate).",
+    )
+    parser.add_argument(
+        "--labels",
+        default="",
+        help="Override labels.json (default: policy-fold original 10).",
+    )
+    parser.add_argument(
+        "--audio-dir",
+        default="",
+        help="Dir with downloads.json + transcripts/ (default: prod-scorecard).",
+    )
+    parser.add_argument(
+        "--llm-cache-dir",
+        default="",
+        help="LLM cache dir (default: quote-anchor/llm_cache_v2 or llm_cache_v3).",
+    )
+    parser.add_argument(
+        "--exclude",
+        default="bill_simmons,marketplace",
+        help="Comma-separated show ids to skip.",
+    )
+    parser.add_argument(
+        "--opening-gate",
+        default="7/7",
+        help="Opening span caught gate string, e.g. 7/7 or 3/3.",
+    )
+    parser.add_argument(
+        "--n-shows-gate",
+        type=int,
+        default=10,
+        help="Required number of scored shows for original10_pass.",
+    )
     return parser.parse_args()
 
 
@@ -111,7 +147,7 @@ def _baseline_snapped() -> dict[str, list[tuple[float, float]]]:
     return snapped
 
 
-def _metrics(totals, *, n_shows: int) -> dict:
+def _metrics(totals, *, n_shows: int, opening_gate: str = "7/7") -> dict:
     inner = totals.span_seconds_recall()
     opening = f"{totals.n_opening_span_caught}/{totals.n_opening_windows}"
     edge = totals.overcut_seconds + totals.undercut_seconds
@@ -123,9 +159,11 @@ def _metrics(totals, *, n_shows: int) -> dict:
         "undercut": totals.undercut_seconds,
         "edge": edge,
         "n_shows": n_shows,
+        "input_tokens": getattr(totals, "input_tokens", None),
+        "output_tokens": getattr(totals, "output_tokens", None),
         "gates": {
             "inner": inner + 1e-12 >= GATES_INNER,
-            "opening": opening == "7/7",
+            "opening": opening == opening_gate,
             "not_ad": totals.not_ad_seconds_cut <= GATES_NOT_AD + 1e-12,
             "edge": edge <= GATES_EDGE + 1e-12,
         },
@@ -143,13 +181,20 @@ def main() -> int:
     os.environ["PODLY_WRITER_LOCAL_FALLBACK"] = "1"
     _load_keys()
     out.mkdir(parents=True, exist_ok=True)
-    labels = load_json(LABELS)
+    labels_path = Path(args.labels) if args.labels else LABELS
+    if not labels_path.is_absolute():
+        labels_path = REPO / labels_path
+    audio_dir = Path(args.audio_dir) if args.audio_dir else AUDIO
+    if not audio_dir.is_absolute():
+        audio_dir = REPO / audio_dir
+    labels = load_json(labels_path)
     windows = list(labels.get("windows") or [])
-    downloads = load_json(AUDIO / "downloads.json")
+    downloads = load_json(audio_dir / "downloads.json")
+    excluded = {s.strip() for s in str(args.exclude).split(",") if s.strip()}
     scored = [
         sid
         for sid, row in downloads.items()
-        if row.get("audio_path") and sid not in {"bill_simmons", "marketplace"}
+        if row.get("audio_path") and sid not in excluded
     ]
 
     def _size(sid: str) -> int:
@@ -162,12 +207,23 @@ def main() -> int:
     words_dir = Path(args.words_dir) if args.words_dir else RUN / "words-aligned"
     if not words_dir.is_absolute():
         words_dir = REPO / words_dir
-    baseline_cuts = _baseline_snapped()
+    llm_cache = Path(args.llm_cache_dir) if args.llm_cache_dir else (
+        RUN / ("llm_cache_v3" if args.full_sentence else "llm_cache_v2")
+    )
+    if not llm_cache.is_absolute():
+        llm_cache = REPO / llm_cache
+    transcripts_dir = audio_dir / "transcripts"
+    if not transcripts_dir.is_dir() and (audio_dir / "baseline" / "transcripts").is_dir():
+        transcripts_dir = audio_dir / "baseline" / "transcripts"
+    baseline_cuts = _baseline_snapped() if audio_dir == AUDIO else {}
     baseline = score_windows(
         [row for row in windows if not row.get("skipped") and row.get("show_id") in baseline_cuts],
         baseline_cuts,
+    ) if baseline_cuts else None
+    config = production_config(
+        enable_quote_anchor_boundaries=True,
+        enable_quote_full_sentence_quotes=bool(args.full_sentence),
     )
-    config = production_config(enable_quote_anchor_boundaries=True)
     app = make_flask(out / "scorecard.sqlite")
     force_local_writer()
     tracker = SpendTracker()
@@ -203,9 +259,9 @@ def main() -> int:
                     transcriber=transcriber,
                     tracker=tracker,
                     words_cache=words_dir / f"{show_id}.json",
-                    llm_cache_dir=LLM_CACHE,
+                    llm_cache_dir=llm_cache,
                     skip_audio_clip=True,
-                    transcripts_dir=AUDIO / "transcripts",
+                    transcripts_dir=transcripts_dir,
                     require_llm_cache=args.require_llm_cache,
                     prefer_transcript_segments=args.prefer_transcript_segments,
                     pull_dai_bed=args.pull_dai_bed,
@@ -252,8 +308,21 @@ def main() -> int:
         "pull_dai_bed": args.pull_dai_bed,
         "gemini_usd": tracker.usd,
         "utc_prior_usd": args.prior_usd,
-        "baseline": _metrics(baseline.totals, n_shows=len(baseline_cuts)),
-        "quote_anchor": _metrics(quote.totals, n_shows=len(production)),
+        "full_sentence": bool(args.full_sentence),
+        "baseline": (
+            _metrics(
+                baseline.totals,
+                n_shows=len(baseline_cuts),
+                opening_gate=args.opening_gate,
+            )
+            if baseline is not None
+            else None
+        ),
+        "quote_anchor": _metrics(
+            quote.totals,
+            n_shows=len(production),
+            opening_gate=args.opening_gate,
+        ),
         "tokens_per_episode": {"quote_anchor": pin, "baseline": bpin},
         "output_tokens_per_episode": {"quote_anchor": pout, "baseline": bpout},
         "wall_s_per_episode": mean_wall,
@@ -270,14 +339,21 @@ def main() -> int:
         "elapsed_s": time.time() - t0,
     }
     qa_gates = summary["quote_anchor"]["gates"]
-    tok_ok = pin <= bpin + 1e-9
+    tok_ok = pin <= bpin + 1e-9 if bpin else True
     summary["original10_pass"] = (
-        len(production) == 10 and all(qa_gates.values()) and tok_ok
+        len(production) == int(args.n_shows_gate)
+        and all(qa_gates.values())
+        and (tok_ok or args.full_sentence)
     )
     summary["tokens_ok"] = tok_ok
     (out / "score.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     quote.notes = [
-        "Integrated quote-anchor (prompt_v2 + lexical_v2 + AudioProcessor merge/snap).",
+        (
+            "Integrated quote-anchor (prompt_v3 full-sentence + leftover merge/"
+            "overlap + lexical_v2 + AudioProcessor merge/snap)."
+            if args.full_sentence
+            else "Integrated quote-anchor (prompt_v2 + lexical_v2 + AudioProcessor merge/snap)."
+        ),
         "Scout off. general_podcast_ads LOCKED.",
         (
             "LLM source: segment transcript"

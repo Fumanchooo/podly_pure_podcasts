@@ -30,12 +30,16 @@ from podcast_processor.experiments.word_transcripts import (
     words_from_payload,
 )
 from podcast_processor.quote_anchor import (
+    CHUNK_LEFTOVER_MAX,
+    CHUNK_OVERLAP_SEGMENTS,
     QUOTE_ANCHOR_SOURCE,
     QuoteMatch,
     SegmentSpan,
     WordTiming,
+    dedupe_quote_matches,
     keep_ad,
     parse_quote_ads,
+    quote_chunk_ranges,
     resolve_ads,
     word_index_range,
 )
@@ -53,6 +57,10 @@ CompleteFn = Callable[[str, str], str]
 
 def quote_anchor_boundaries_enabled(config: Config) -> bool:
     return bool(getattr(config, "enable_quote_anchor_boundaries", False))
+
+
+def quote_full_sentence_quotes_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_full_sentence_quotes", False))
 
 
 def word_cache_path_for_audio(audio_path: str | Path) -> Path:
@@ -119,6 +127,8 @@ class QuoteAnchorClassifier:
         self.last_word_whisper_s = 0.0
         self.last_classify_s = 0.0
         self.silence_gaps_override: list[tuple[float, float]] | None = None
+        self.full_sentence = quote_full_sentence_quotes_enabled(config)
+        self.prompt_version = "v3" if self.full_sentence else QUOTE_PROMPT_VERSION
 
     def classify(
         self,
@@ -142,17 +152,23 @@ class QuoteAnchorClassifier:
         gaps = self._silence_gaps(post)
         loaded = reanchor_words_to_speech(loaded, spans, gaps)
         matches: list[QuoteMatch] = []
-        idx = 0
-        while idx < len(transcript_segments):
-            chunk = transcript_segments[idx : idx + QUOTE_CHUNK_SEGMENTS]
-            chunk_spans = spans[idx : idx + QUOTE_CHUNK_SEGMENTS]
+        leftover = CHUNK_LEFTOVER_MAX if self.full_sentence else 0
+        overlap = CHUNK_OVERLAP_SEGMENTS if self.full_sentence else 0
+        for lo, hi in quote_chunk_ranges(
+            len(transcript_segments),
+            size=QUOTE_CHUNK_SEGMENTS,
+            leftover_max=leftover,
+            overlap=overlap,
+        ):
+            chunk = transcript_segments[lo:hi]
+            chunk_spans = spans[lo:hi]
             chunk_start = chunk_spans[0].start
             chunk_end = chunk_spans[-1].end
             user = quote_user_prompt(
                 title=str(post.title or ""),
                 start_seconds=chunk_start,
                 texts=[seg.text or "" for seg in chunk],
-                prompt_version=QUOTE_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
             )
             raw, model_call = self._complete_chunk(
                 post=post,
@@ -177,13 +193,15 @@ class QuoteAnchorClassifier:
                 word_from=w0,
                 word_to=w1,
                 stop_before=prior_end,
+                full_sentence=self.full_sentence,
             )
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
             if model_call is not None:
                 self._write_identifications(chunk, chunk_matches, model_call)
             matches.extend(chunk_matches)
-            idx += len(chunk)
+        if self.full_sentence:
+            matches = dedupe_quote_matches(matches)
 
         cuts = lexical_cuts_from_matches(
             matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
@@ -288,7 +306,7 @@ class QuoteAnchorClassifier:
         chunk: list[TranscriptSegment],
         user: str,
     ) -> tuple[str, ModelCall | None]:
-        system_prompt = system_prompt_for(QUOTE_PROMPT_VERSION)
+        system_prompt = system_prompt_for(self.prompt_version)
         model_call = self._upsert_model_call(
             post=post,
             first_seq_num=int(chunk[0].sequence_num),
@@ -334,7 +352,7 @@ class QuoteAnchorClassifier:
                     ],
                     timeout=int(getattr(self.config, "openai_timeout", 300) or 300),
                     response_format={"type": "json_object"},
-                    max_tokens=512,
+                    max_tokens=1024 if self.full_sentence else 512,
                     reasoning_effort="low",
                     api_key=self.config.llm_api_key,
                 )

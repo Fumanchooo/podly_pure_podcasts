@@ -536,6 +536,9 @@ def to_pydantic_config() -> PydanticConfig:
         enable_quote_anchor_boundaries=bool(
             DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES
         ),
+        enable_quote_full_sentence_quotes=bool(
+            DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES
+        ),
         enable_bow_scout_gemini_confirm=bool(
             DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM
         ),
@@ -681,6 +684,13 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     )
     if env_quote_anchor is not None:
         cfg.enable_quote_anchor_boundaries = env_quote_anchor
+
+    env_full_sentence = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_FULL_SENTENCE_QUOTES"),
+        env_name="ENABLE_QUOTE_FULL_SENTENCE_QUOTES",
+    )
+    if env_full_sentence is not None:
+        cfg.enable_quote_full_sentence_quotes = env_full_sentence
 
 
 def _apply_remote_whisper_runtime_overrides(whisper: RemoteWhisperConfig) -> None:

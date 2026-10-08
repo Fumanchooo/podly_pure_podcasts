@@ -137,6 +137,16 @@ class Config(BaseModel):
             "confirm stays off."
         ),
     )
+    enable_quote_full_sentence_quotes: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES,
+        description=(
+            "When quote-anchor is on, ask the LLM for the verbatim first and "
+            "last full sentence of each ad (lead-ins/outros included), match "
+            "those longer quotes with short-quote fallbacks, merge a 1–2 "
+            "segment leftover LLM chunk, and overlap 1–2 segments with "
+            "dedupe. Default off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

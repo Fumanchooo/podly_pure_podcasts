@@ -25,6 +25,8 @@ def test_bow_scout_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES is False
     assert config.enable_quote_anchor_boundaries is False
     assert quote_anchor_boundaries_enabled(config) is False
+    assert DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES is False
+    assert config.enable_quote_full_sentence_quotes is False
 
 
 def test_config_flag_can_be_enabled_without_swapping_defaults() -> None:

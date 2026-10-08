@@ -48,14 +48,18 @@ from podcast_processor.experiments.word_transcripts import (
     words_from_payload,
 )
 from podcast_processor.quote_anchor import (
+    CHUNK_LEFTOVER_MAX,
+    CHUNK_OVERLAP_SEGMENTS,
     QuoteMatch,
     SegmentSpan,
     WordTiming,
     cuts_from_matches,
+    dedupe_quote_matches,
     hybrid_cuts_from_matches,
     keep_ad,
     match_rate,
     parse_quote_ads,
+    quote_chunk_ranges,
     resolve_ads,
     word_index_range,
 )
@@ -240,7 +244,7 @@ def complete_json(
                 ],
                 timeout=300,
                 response_format={"type": "json_object"},
-                max_tokens=512,
+                max_tokens=1024 if "verbatim first full sentence" in system_prompt else 512,
                 reasoning_effort="low",
             )
             break
@@ -335,10 +339,17 @@ def quote_cuts_for_show(
     pad_seconds: float = 0.0,
 ) -> tuple[list[tuple[float, float]], list[QuoteMatch]]:
     system_prompt = system_prompt_for(prompt_version)
+    full_sentence = prompt_version == "v3"
+    leftover = CHUNK_LEFTOVER_MAX if full_sentence else 0
+    overlap = CHUNK_OVERLAP_SEGMENTS if full_sentence else 0
     matches: list[QuoteMatch] = []
-    idx = 0
-    while idx < len(segments):
-        chunk = segments[idx : idx + CHUNK_SEGMENTS]
+    for lo, hi in quote_chunk_ranges(
+        len(segments),
+        size=CHUNK_SEGMENTS,
+        leftover_max=leftover,
+        overlap=overlap,
+    ):
+        chunk = segments[lo:hi]
         chunk_start = chunk[0].start
         chunk_end = chunk[-1].end
         user = quote_user_prompt(
@@ -366,9 +377,11 @@ def quote_cuts_for_show(
                 chunk_end=chunk_end,
                 word_from=w0,
                 word_to=w1,
+                full_sentence=full_sentence,
             )
         )
-        idx += len(chunk)
+    if full_sentence:
+        matches = dedupe_quote_matches(matches)
     gaps = []
     if audio_path is not None and audio_path.is_file():
         gaps = [
