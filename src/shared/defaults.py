@@ -24,6 +24,9 @@ ENABLE_BOW_SCOUT_GEMINI_CONFIRM = False
 # Quote-anchor cutter (prompt_v2 + lexical_v2). Default off until the
 # original-10 + holdout gates pass; live deploy flips this True.
 ENABLE_QUOTE_ANCHOR_BOUNDARIES = False
+# Spot-then-confirm: $0 lexicon spotter + one LLM call per candidate
+# (padded region), not a full-episode chunk walk. Default off.
+ENABLE_SPOT_THEN_CONFIRM = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

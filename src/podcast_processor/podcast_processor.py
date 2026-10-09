@@ -25,6 +25,8 @@ from podcast_processor.audio_processor import AudioProcessor
 from podcast_processor.quote_anchor_classifier import (
     QuoteAnchorClassifier,
     quote_anchor_boundaries_enabled,
+    quote_anchor_path_enabled,
+    spot_then_confirm_enabled,
 )
 from podcast_processor.chapter_ad_detector import (
     ChapterAdDetector,
@@ -935,10 +937,15 @@ class PodcastProcessor:
         self.status_manager.update_job_status(
             job, "running", 3, "Identifying ads", 75.0
         )
-        if quote_anchor_boundaries_enabled(self.config):
-            self.logger.info(
-                "enable_quote_anchor_boundaries is on; using prompt_v2 + lexical_v2"
-            )
+        if quote_anchor_path_enabled(self.config):
+            if spot_then_confirm_enabled(self.config):
+                self.logger.info(
+                    "enable_spot_then_confirm is on; $0 spotter + per-break LLM"
+                )
+            else:
+                self.logger.info(
+                    "enable_quote_anchor_boundaries is on; using prompt_v2 + lexical_v2"
+                )
             self.quote_anchor_classifier.classify(
                 transcript_segments=transcript_segments,
                 post=post,

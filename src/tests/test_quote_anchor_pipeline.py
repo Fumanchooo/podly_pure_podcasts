@@ -15,6 +15,8 @@ from podcast_processor.experiments.prod_vs_auto_gold import force_local_writer
 from podcast_processor.podcast_processor import (
     PodcastProcessor,
     quote_anchor_boundaries_enabled,
+    quote_anchor_path_enabled,
+    spot_then_confirm_enabled,
 )
 from podcast_processor.quote_anchor import (
     QUOTE_ANCHOR_SOURCE,
@@ -87,9 +89,13 @@ def _seed_post(title: str = "Darknet") -> tuple[Post, list[TranscriptSegment]]:
 
 def test_quote_anchor_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES is False
+    assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
     config = create_standard_test_config()
     assert config.enable_quote_anchor_boundaries is False
+    assert config.enable_spot_then_confirm is False
     assert quote_anchor_boundaries_enabled(config) is False
+    assert spot_then_confirm_enabled(config) is False
+    assert quote_anchor_path_enabled(config) is False
 
 
 def test_quote_anchor_flag_can_be_enabled() -> None:
@@ -102,7 +108,7 @@ def test_quote_anchor_flag_can_be_enabled() -> None:
 
 def test_classify_uses_quote_anchor_when_flag_on() -> None:
     source = inspect.getsource(PodcastProcessor._classify_ad_segments)
-    assert "quote_anchor_boundaries_enabled" in source
+    assert "quote_anchor_path_enabled" in source
     assert "self.quote_anchor_classifier.classify" in source
     assert "self.ad_classifier.classify" in source
 

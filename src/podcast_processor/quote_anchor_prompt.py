@@ -101,6 +101,35 @@ def quote_user_prompt(
     )
 
 
+def confirm_user_prompt(
+    *,
+    title: str,
+    start_seconds: float,
+    texts: list[str],
+    prompt_version: str = "v2",
+) -> str:
+    """One-candidate confirm: smaller window, ads:[] if the region is not an ad."""
+    cue = chunk_position_cue(start_seconds)
+    body = plain_transcript(texts)
+    extra = ""
+    if prompt_version == "v2":
+        extra = (
+            " Quote the handoff into each ad break and the last words before "
+            "the show resumes (outro/CTA tail)."
+        )
+    return (
+        f'You are analyzing "{title}". {cue}. This excerpt is a CANDIDATE ad '
+        "region plus padding — it may be show content. If there is no ad "
+        f"(including no self-promo / sister-show / app / membership plug), "
+        f'return {{"ads":[]}}.{extra}\n'
+        "If there is an ad break, quote the FULL break (not just the cue). "
+        "If the ad continues past the start or end of this excerpt, still "
+        "quote the first/last words that ARE present.\n"
+        "Return only the JSON contract. Transcript excerpt (no timestamps):\n\n"
+        f"{body}\n"
+    )
+
+
 def system_prompt_for(version: str) -> str:
     if version == "v2":
         return QUOTE_SYSTEM_PROMPT_V2

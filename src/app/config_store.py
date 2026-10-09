@@ -536,6 +536,7 @@ def to_pydantic_config() -> PydanticConfig:
         enable_quote_anchor_boundaries=bool(
             DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES
         ),
+        enable_spot_then_confirm=bool(DEFAULTS.ENABLE_SPOT_THEN_CONFIRM),
         enable_bow_scout_gemini_confirm=bool(
             DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM
         ),
@@ -681,6 +682,13 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     )
     if env_quote_anchor is not None:
         cfg.enable_quote_anchor_boundaries = env_quote_anchor
+
+    env_spot_confirm = _parse_bool(
+        os.environ.get("ENABLE_SPOT_THEN_CONFIRM"),
+        env_name="ENABLE_SPOT_THEN_CONFIRM",
+    )
+    if env_spot_confirm is not None:
+        cfg.enable_spot_then_confirm = env_spot_confirm
 
 
 def _apply_remote_whisper_runtime_overrides(whisper: RemoteWhisperConfig) -> None:

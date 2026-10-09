@@ -137,6 +137,14 @@ class Config(BaseModel):
             "confirm stays off."
         ),
     )
+    enable_spot_then_confirm: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_THEN_CONFIRM,
+        description=(
+            "Spot-then-confirm instead of walking every transcript chunk: "
+            "$0 keyword/sponsor spotter, then one LLM confirm per candidate "
+            "break with padded context. Default off. Scout confirm stays off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

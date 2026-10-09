@@ -139,7 +139,11 @@ def assert_scout_off(config: Config) -> None:
         )
 
 
-def production_config(*, enable_quote_anchor_boundaries: bool = False) -> Config:
+def production_config(
+    *,
+    enable_quote_anchor_boundaries: bool = False,
+    enable_spot_then_confirm: bool = False,
+) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
     config = Config(
@@ -147,6 +151,7 @@ def production_config(*, enable_quote_anchor_boundaries: bool = False) -> Config
         llm_model=os.environ.get("LLM_MODEL") or DEFAULT_GEMINI_MODEL,
         enable_bow_scout_gemini_confirm=False,
         enable_quote_anchor_boundaries=enable_quote_anchor_boundaries,
+        enable_spot_then_confirm=enable_spot_then_confirm,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
@@ -535,6 +540,9 @@ def run_quote_anchor_production_cut(
     require_llm_cache: bool = False,
     prefer_transcript_segments: bool = True,
     pull_dai_bed: bool = False,
+    extra_phrases: tuple[str, ...] = (),
+    extra_names: tuple[str, ...] = (),
+    ngram_phrases: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Integrated quote-anchor classify + AudioProcessor merge/snap.
 
@@ -625,6 +633,9 @@ def run_quote_anchor_production_cut(
             llm_cache_dir=llm_cache_dir,
             require_llm_cache=require_llm_cache,
             pull_dai_bed=pull_dai_bed,
+            extra_phrases=extra_phrases,
+            extra_names=extra_names,
+            ngram_phrases=ngram_phrases,
         )
         classifier.silence_gaps_override = silence_gaps
         classifier.classify(transcript_segments=db_segments, post=post)
@@ -684,6 +695,12 @@ def run_quote_anchor_production_cut(
         "n_dropped": sum(1 for item in classifier.last_matches if item.dropped),
         "input_tokens": classifier.last_input_tokens,
         "output_tokens": classifier.last_output_tokens,
+        "n_llm_calls": classifier.last_llm_calls,
+        "n_candidates": len(classifier.last_candidates),
+        "n_extends": classifier.last_extends,
+        "spot_then_confirm": bool(
+            getattr(config, "enable_spot_then_confirm", False)
+        ),
         "wall_s": wall_s,
         "word_whisper_s": classifier.last_word_whisper_s,
         "classify_s": classifier.last_classify_s,

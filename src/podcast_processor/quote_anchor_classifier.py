@@ -29,6 +29,7 @@ from podcast_processor.experiments.word_transcripts import (
     transcribe_word_timestamps,
     words_from_payload,
 )
+from podcast_processor.ad_spotter import CandidateBreak, spot_candidates
 from podcast_processor.quote_anchor import (
     QUOTE_ANCHOR_SOURCE,
     QuoteMatch,
@@ -39,7 +40,11 @@ from podcast_processor.quote_anchor import (
     resolve_ads,
     word_index_range,
 )
-from podcast_processor.quote_anchor_prompt import quote_user_prompt, system_prompt_for
+from podcast_processor.quote_anchor_prompt import (
+    confirm_user_prompt,
+    quote_user_prompt,
+    system_prompt_for,
+)
 from podcast_processor.quote_lexicon import lexical_cuts_from_matches
 from shared import defaults as DEFAULTS
 from shared.config import Config, TestWhisperConfig
@@ -48,11 +53,25 @@ logger = logging.getLogger("global_logger")
 
 QUOTE_PROMPT_VERSION = "v2"
 QUOTE_CHUNK_SEGMENTS = DEFAULTS.PROCESSING_NUM_SEGMENTS_TO_INPUT_TO_PROMPT
+SPOT_PAD_S = 50.0
+SPOT_EDGE_SLACK_S = 5.0
+SPOT_EXTEND_S = 50.0
+SPOT_MAX_EXTENDS = 1
 CompleteFn = Callable[[str, str], str]
 
 
 def quote_anchor_boundaries_enabled(config: Config) -> bool:
     return bool(getattr(config, "enable_quote_anchor_boundaries", False))
+
+
+def spot_then_confirm_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_spot_then_confirm", False))
+
+
+def quote_anchor_path_enabled(config: Config) -> bool:
+    return quote_anchor_boundaries_enabled(config) or spot_then_confirm_enabled(
+        config
+    )
 
 
 def word_cache_path_for_audio(audio_path: str | Path) -> Path:
@@ -102,6 +121,10 @@ class QuoteAnchorClassifier:
         whisper_model: str = "base",
         require_llm_cache: bool = False,
         pull_dai_bed: bool = False,
+        ngram_phrases: tuple[str, ...] = (),
+        extra_phrases: tuple[str, ...] = (),
+        extra_names: tuple[str, ...] = (),
+        spot_pad_s: float = SPOT_PAD_S,
     ) -> None:
         self.config = config
         self.logger = logger or logging.getLogger("global_logger")
@@ -112,10 +135,17 @@ class QuoteAnchorClassifier:
         self.whisper_model = whisper_model
         self.require_llm_cache = require_llm_cache
         self.pull_dai_bed = pull_dai_bed
+        self.ngram_phrases = ngram_phrases
+        self.extra_phrases = extra_phrases
+        self.extra_names = extra_names
+        self.spot_pad_s = spot_pad_s
         self.last_matches: list[QuoteMatch] = []
         self.last_cuts: list[tuple[float, float]] = []
         self.last_input_tokens = 0
         self.last_output_tokens = 0
+        self.last_llm_calls = 0
+        self.last_extends = 0
+        self.last_candidates: list[CandidateBreak] = []
         self.last_word_whisper_s = 0.0
         self.last_classify_s = 0.0
         self.silence_gaps_override: list[tuple[float, float]] | None = None
@@ -130,6 +160,9 @@ class QuoteAnchorClassifier:
         started = time.time()
         self.last_input_tokens = 0
         self.last_output_tokens = 0
+        self.last_llm_calls = 0
+        self.last_extends = 0
+        self.last_candidates = []
         if not transcript_segments:
             self.last_matches = []
             self.last_cuts = []
@@ -141,6 +174,15 @@ class QuoteAnchorClassifier:
         spans = segments_to_spans(transcript_segments)
         gaps = self._silence_gaps(post)
         loaded = reanchor_words_to_speech(loaded, spans, gaps)
+        if spot_then_confirm_enabled(self.config):
+            return self._classify_spot_then_confirm(
+                transcript_segments=transcript_segments,
+                post=post,
+                loaded=loaded,
+                spans=spans,
+                gaps=gaps,
+                started=started,
+            )
         matches: list[QuoteMatch] = []
         idx = 0
         while idx < len(transcript_segments):
@@ -214,6 +256,154 @@ class QuoteAnchorClassifier:
             len(cuts),
         )
         return cuts
+
+    def _classify_spot_then_confirm(
+        self,
+        *,
+        transcript_segments: list[TranscriptSegment],
+        post: Post,
+        loaded: list[WordTiming],
+        spans: list[SegmentSpan],
+        gaps: list[tuple[float, float]],
+        started: float,
+    ) -> list[tuple[float, float]]:
+        candidates, stats = spot_candidates(
+            loaded,
+            extra_phrases=self.extra_phrases,
+            extra_names=self.extra_names,
+            ngram_phrases=self.ngram_phrases,
+        )
+        self.last_candidates = candidates
+        ep_end = float(transcript_segments[-1].end_time or 0.0)
+        matches: list[QuoteMatch] = []
+        pad = float(self.spot_pad_s)
+        for cand in candidates:
+            win_start = max(0.0, cand.start - pad)
+            win_end = min(ep_end, cand.end + pad)
+            prior_end = max((item.end for item in matches), default=None)
+            chunk_matches, extends = self._confirm_window(
+                post=post,
+                transcript_segments=transcript_segments,
+                loaded=loaded,
+                spans=spans,
+                cand=cand,
+                win_start=win_start,
+                win_end=win_end,
+                ep_end=ep_end,
+                prior_end=prior_end,
+            )
+            self.last_extends += extends
+            if any(item.dropped for item in chunk_matches):
+                raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
+            matches.extend(chunk_matches)
+
+        cuts = lexical_cuts_from_matches(
+            matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
+        )
+        if len(cuts) < len(matches):
+            used = {(round(a, 3), round(b, 3)) for a, b in cuts}
+            for item in matches:
+                key = (round(item.start, 3), round(item.end, 3))
+                if item.end > item.start and key not in used:
+                    cuts.append((item.start, item.end))
+                    self.logger.warning(
+                        "lexical dropped a quote span; restoring %.1f-%.1f",
+                        item.start,
+                        item.end,
+                    )
+        self.last_matches = matches
+        self.last_cuts = cuts
+        self._persist_cuts(post, cuts, matches)
+        self.last_classify_s = time.time() - started
+        self.logger.info(
+            "spot-then-confirm post %s candidates=%s hits=%s calls=%s extends=%s quotes=%s cuts=%s",
+            post.id,
+            stats.n_candidates,
+            stats.n_hits,
+            self.last_llm_calls,
+            self.last_extends,
+            len(matches),
+            len(cuts),
+        )
+        return cuts
+
+    def _confirm_window(
+        self,
+        *,
+        post: Post,
+        transcript_segments: list[TranscriptSegment],
+        loaded: list[WordTiming],
+        spans: list[SegmentSpan],
+        cand: CandidateBreak,
+        win_start: float,
+        win_end: float,
+        ep_end: float,
+        prior_end: float | None,
+    ) -> tuple[list[QuoteMatch], int]:
+        extends = 0
+        matches: list[QuoteMatch] = []
+        last_good: list[QuoteMatch] = []
+        start = win_start
+        end = win_end
+        for _attempt in range(SPOT_MAX_EXTENDS + 1):
+            chunk = [
+                seg
+                for seg in transcript_segments
+                if float(seg.end_time or 0.0) > start
+                and float(seg.start_time or 0.0) < end
+            ]
+            if not chunk:
+                return [], extends
+            user = confirm_user_prompt(
+                title=str(post.title or ""),
+                start_seconds=start,
+                texts=[seg.text or "" for seg in chunk],
+                prompt_version=QUOTE_PROMPT_VERSION,
+            )
+            raw, model_call = self._complete_chunk(
+                post=post, chunk=chunk, user=user
+            )
+            ads = [
+                ad
+                for ad in parse_quote_ads(raw)
+                if keep_ad(ad, float(self.config.output.min_confidence))
+            ]
+            w0, w1 = word_index_range(loaded, max(0.0, start - 1.0), end + 1.0)
+            # Fallback stays on the spotted cluster, not the padded window,
+            # so an unmatched quote cannot cut ~100s of neighboring show.
+            fallback_start = max(0.0, cand.start - 2.0)
+            fallback_end = min(ep_end, max(cand.end + 2.0, fallback_start + 0.5))
+            matches = resolve_ads(
+                ads,
+                loaded,
+                spans,
+                chunk_start=fallback_start,
+                chunk_end=fallback_end,
+                word_from=w0,
+                word_to=w1,
+                stop_before=prior_end,
+            )
+            if model_call is not None:
+                self._write_identifications(chunk, matches, model_call)
+            if matches:
+                last_good = matches
+            if not matches or extends >= SPOT_MAX_EXTENDS:
+                break
+            grew = False
+            if start > 0.0 and any(
+                item.start <= start + SPOT_EDGE_SLACK_S for item in matches
+            ):
+                start = max(0.0, start - SPOT_EXTEND_S)
+                grew = True
+            if end < ep_end - 1e-6 and any(
+                item.end >= end - SPOT_EDGE_SLACK_S for item in matches
+            ):
+                end = min(ep_end, end + SPOT_EXTEND_S)
+                grew = True
+            if not grew:
+                break
+            extends += 1
+        return last_good or matches, extends
 
     def load_words(
         self,
@@ -295,6 +485,7 @@ class QuoteAnchorClassifier:
             last_seq_num=int(chunk[-1].sequence_num),
             prompt=user,
         )
+        self.last_llm_calls += 1
         if self.complete_fn is not None:
             content = self.complete_fn(system_prompt, user)
             self._mark_model_call(model_call, content, status="success")

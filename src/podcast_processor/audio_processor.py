@@ -9,7 +9,7 @@ from podcast_processor.ad_merger import AdMerger
 from podcast_processor.audio import clip_segments_with_fade, get_audio_duration_ms
 from podcast_processor.boundary_snap import refine_cuts
 from podcast_processor.quote_anchor import QUOTE_ANCHOR_SOURCE
-from podcast_processor.quote_anchor_classifier import quote_anchor_boundaries_enabled
+from podcast_processor.quote_anchor_classifier import quote_anchor_path_enabled
 from shared import defaults as DEFAULTS
 from shared.config import Config
 
@@ -52,7 +52,7 @@ class AudioProcessor:
         """
         self.logger.info(f"Retrieving ad segments from database for post {post.id}.")
 
-        if quote_anchor_boundaries_enabled(self.config):
+        if quote_anchor_path_enabled(self.config):
             quote_cuts = self._quote_anchor_cuts(post)
             if quote_cuts is not None:
                 self.logger.info(
