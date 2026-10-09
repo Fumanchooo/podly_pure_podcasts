@@ -206,15 +206,9 @@ def clip_truncated(
     clip_start: float,
     clip_end: float,
 ) -> bool:
-    dur = clip_end - clip_start
-    if dur < 2.0:
-        return False
-    if n_words >= TOKEN_CAP_WARN:
-        return True
-    if n_words == 0:
-        return False
-    tail = clip_end - last_word_end
-    return n_words >= 40 and tail >= 1.0 and (n_words / dur) >= 2.5
+    """True when the 320-token cap is likely hit, not when a clip just ends in pause."""
+    del last_word_end, clip_start, clip_end
+    return n_words >= TOKEN_CAP_WARN
 
 
 @dataclass
@@ -433,33 +427,28 @@ def aligned_token_mae(
     *,
     max_skew_s: float = 2.0,
 ) -> dict[str, float]:
-    """In-order greedy match of equal tokens; median |dt| of start times."""
+    """Two-pointer match of equal tokens in time order; median |dt| of starts."""
+    left_toks = [(normalize_tokens(w.word)[0], w) for w in left if normalize_tokens(w.word)]
+    right_toks = [(normalize_tokens(w.word)[0], w) for w in right if normalize_tokens(w.word)]
     i = 0
+    j = 0
     deltas: list[float] = []
-    right_toks = [(normalize_tokens(w.word), w) for w in right]
-    right_toks = [(toks[0], w) for toks, w in right_toks if toks]
-    for word in left:
-        toks = normalize_tokens(word.word)
-        if not toks:
-            continue
-        needle = toks[0]
-        best = -1
-        while i < len(right_toks):
-            tok, other = right_toks[i]
-            if tok != needle:
-                i += 1
-                continue
-            dt = abs(other.start - word.start)
-            if dt <= max_skew_s:
-                best = i
-                deltas.append(dt)
-                i += 1
-                break
-            if other.start > word.start + max_skew_s:
-                break
+    while i < len(left_toks) and j < len(right_toks):
+        needle, a = left_toks[i]
+        tok, b = right_toks[j]
+        if needle == tok and abs(b.start - a.start) <= max_skew_s:
+            deltas.append(abs(b.start - a.start))
             i += 1
-        if best < 0:
+            j += 1
             continue
+        if b.start < a.start - 0.35:
+            j += 1
+            continue
+        if a.start < b.start - 0.35:
+            i += 1
+            continue
+        i += 1
+        j += 1
     deltas.sort()
     n = len(deltas)
     median = deltas[n // 2] if n else 0.0
