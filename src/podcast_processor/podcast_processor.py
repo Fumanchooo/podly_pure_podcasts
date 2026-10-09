@@ -27,6 +27,7 @@ from podcast_processor.quote_anchor_classifier import (
     quote_anchor_boundaries_enabled,
     quote_anchor_path_enabled,
     spot_then_confirm_enabled,
+    whistle_stt_enabled,
 )
 from podcast_processor.chapter_ad_detector import (
     ChapterAdDetector,
@@ -942,6 +943,8 @@ class PodcastProcessor:
                 self.logger.info(
                     "enable_spot_then_confirm is on; $0 spotter + per-break LLM"
                 )
+            if whistle_stt_enabled(self.config):
+                self.logger.info("enable_whistle_stt is on; Cactus Whistle word STT")
             else:
                 self.logger.info(
                     "enable_quote_anchor_boundaries is on; using prompt_v2 + lexical_v2"

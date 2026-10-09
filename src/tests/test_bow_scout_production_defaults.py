@@ -10,6 +10,7 @@ from podcast_processor.podcast_processor import (
     bow_scout_gemini_confirm_enabled,
     quote_anchor_boundaries_enabled,
     spot_then_confirm_enabled,
+    whistle_stt_enabled,
 )
 from shared import defaults as DEFAULTS
 from shared.config import Config
@@ -29,6 +30,9 @@ def test_bow_scout_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
     assert config.enable_spot_then_confirm is False
     assert spot_then_confirm_enabled(config) is False
+    assert DEFAULTS.ENABLE_WHISTLE_STT is False
+    assert config.enable_whistle_stt is False
+    assert whistle_stt_enabled(config) is False
 
 
 def test_config_flag_can_be_enabled_without_swapping_defaults() -> None:
@@ -64,3 +68,4 @@ def test_pydantic_config_field_defaults_false() -> None:
     field = Config.model_fields["enable_bow_scout_gemini_confirm"]
     assert field.default is False
     assert Config.model_fields["enable_spot_then_confirm"].default is False
+    assert Config.model_fields["enable_whistle_stt"].default is False

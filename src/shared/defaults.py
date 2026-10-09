@@ -27,6 +27,8 @@ ENABLE_QUOTE_ANCHOR_BOUNDARIES = False
 # Spot-then-confirm: $0 lexicon spotter + one LLM call per candidate
 # (padded region), not a full-episode chunk walk. Default off.
 ENABLE_SPOT_THEN_CONFIRM = False
+# Cactus Whistle STT instead of local openai-whisper. Default off.
+ENABLE_WHISTLE_STT = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

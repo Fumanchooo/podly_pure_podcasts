@@ -145,6 +145,13 @@ class Config(BaseModel):
             "break with padded context. Default off. Scout confirm stays off."
         ),
     )
+    enable_whistle_stt: bool = Field(
+        default=DEFAULTS.ENABLE_WHISTLE_STT,
+        description=(
+            "Use Cactus Whistle for word-level STT instead of local "
+            "openai-whisper segment-align. Default off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

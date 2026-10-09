@@ -74,9 +74,16 @@ def quote_anchor_path_enabled(config: Config) -> bool:
     )
 
 
-def word_cache_path_for_audio(audio_path: str | Path) -> Path:
+def whistle_stt_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_whistle_stt", False))
+
+
+def word_cache_path_for_audio(
+    audio_path: str | Path, *, backend: str = "aligned"
+) -> Path:
     path = Path(audio_path)
-    return path.with_name(path.name + ".words.json")
+    suffix = ".whistle.json" if backend == "whistle" else ".words.json"
+    return path.with_name(path.name + suffix)
 
 
 def interpolate_words_from_segments(
@@ -413,18 +420,54 @@ class QuoteAnchorClassifier:
         if isinstance(self.config.whisper, TestWhisperConfig):
             return interpolate_words_from_segments(transcript_segments)
         audio = post.unprocessed_audio_path
+        use_whistle = whistle_stt_enabled(self.config)
         cache = self.word_cache_path
         if cache is None and audio:
-            cache = word_cache_path_for_audio(audio)
+            cache = word_cache_path_for_audio(
+                audio, backend="whistle" if use_whistle else "aligned"
+            )
         if cache is not None and cache.is_file():
             try:
                 payload = json.loads(cache.read_text(encoding="utf-8"))
-                if payload_is_aligned(payload):
+                from podcast_processor.whistle_transcribe import payload_is_whistle
+
+                accept = (
+                    payload_is_whistle(payload)
+                    if use_whistle
+                    else payload_is_aligned(payload)
+                )
+                if accept:
                     words = words_from_payload(payload)
                     if words:
                         return words
             except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
                 self.logger.warning("unreadable word cache %s", cache, exc_info=True)
+        if use_whistle and audio and Path(str(audio)).is_file() and cache is not None:
+            started = time.time()
+            try:
+                from podcast_processor.whistle_transcribe import (
+                    sponsor_keywords,
+                    transcribe_word_timestamps_whistle,
+                )
+
+                words = transcribe_word_timestamps_whistle(
+                    Path(str(audio)),
+                    cache,
+                    keywords=sponsor_keywords(),
+                )
+                self.last_word_whisper_s = time.time() - started
+                if words:
+                    return words
+            except Exception:  # noqa: BLE001
+                self.logger.exception(
+                    "whistle STT failed for post %s; interpolating",
+                    post.id,
+                )
+                self.last_word_whisper_s = time.time() - started
+            self.logger.warning(
+                "interpolating word times from segments for post %s", post.id
+            )
+            return interpolate_words_from_segments(transcript_segments)
         if audio and Path(str(audio)).is_file() and cache is not None:
             os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
             started = time.time()
