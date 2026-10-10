@@ -706,8 +706,25 @@ class QuoteAnchorClassifier:
     def _cache_key(self, system_prompt: str, user: str) -> str:
         return hashlib.sha1(f"{system_prompt}\n---\n{user}".encode()).hexdigest()
 
+    def _cache_key_variants(self, system_prompt: str, user: str) -> list[str]:
+        """Live 1b7728d confirm said 'first/last words'; spot-v2+ said 'sentence (or words)'."""
+        keys = [self._cache_key(system_prompt, user)]
+        old = "quote the first/last words that ARE present."
+        new = "quote the first/last sentence (or words) that ARE present."
+        if new in user:
+            keys.append(self._cache_key(system_prompt, user.replace(new, old)))
+        if old in user:
+            keys.append(self._cache_key(system_prompt, user.replace(old, new)))
+        seen: set[str] = set()
+        out: list[str] = []
+        for key in keys:
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+        return out
+
     def _read_llm_cache(self, system_prompt: str, user: str) -> dict[str, Any] | None:
-        key = f"{self._cache_key(system_prompt, user)}.json"
+        keys = [f"{key}.json" for key in self._cache_key_variants(system_prompt, user)]
         dirs: list[Path] = []
         for path in self.llm_cache_dirs:
             if path not in dirs:
@@ -715,15 +732,16 @@ class QuoteAnchorClassifier:
         if self.llm_cache_dir is not None and self.llm_cache_dir not in dirs:
             dirs.insert(0, self.llm_cache_dir)
         for cache_dir in dirs:
-            path = cache_dir / key
-            if not path.is_file():
-                continue
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if isinstance(payload, dict):
-                return payload
+            for key in keys:
+                path = cache_dir / key
+                if not path.is_file():
+                    continue
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(payload, dict):
+                    return payload
         return None
 
     def _write_llm_cache(
