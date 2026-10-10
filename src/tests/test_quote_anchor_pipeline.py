@@ -94,6 +94,7 @@ def test_quote_anchor_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_SPOT_MERGE_CALLS is False
     assert DEFAULTS.ENABLE_RICHER_SPOTTER is False
     assert DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND is False
+    assert DEFAULTS.ENABLE_QUOTE_UNIQUE_ANCHORS is False
     config = create_standard_test_config()
     assert config.enable_quote_anchor_boundaries is False
     assert config.enable_spot_then_confirm is False
@@ -101,6 +102,7 @@ def test_quote_anchor_flag_defaults_off() -> None:
     assert config.enable_spot_merge_calls is False
     assert config.enable_richer_spotter is False
     assert config.enable_quote_fallback_bound is False
+    assert config.enable_quote_unique_anchors is False
     assert quote_anchor_boundaries_enabled(config) is False
     assert spot_then_confirm_enabled(config) is False
     assert quote_anchor_path_enabled(config) is False
@@ -135,6 +137,13 @@ def test_parse_quote_ads_and_keep() -> None:
         '"content_type":"technical_discussion","confidence":0.9}]}'
     )
     assert keep_ad(tech[0], 0.8) is False
+    anchored = parse_quote_ads(
+        '{"ads":[{"start_anchor":"this week on show a",'
+        '"end_anchor":"wherever you get show b",'
+        '"content_type":"educational/self_promo","confidence":0.95}]}'
+    )
+    assert anchored[0].start_quote == "this week on show a"
+    assert anchored[0].end_quote == "wherever you get show b"
 
 
 def test_get_ad_segments_uses_quote_cuts_when_flag_on(app: Flask) -> None:

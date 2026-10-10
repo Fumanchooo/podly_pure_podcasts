@@ -112,6 +112,52 @@ Output: {"ads":[{"start_quote":"This week on Ted Radio Hour, listen on the NPR a
 """
 
 
+QUOTE_SYSTEM_PROMPT_V4 = """Your job is to identify complete advertisement BLOCKS in podcast transcript excerpts.
+
+CRITICAL: self-promo, network/sister-show promos, first-party app plugs, and membership asks COUNT AS ADS anywhere in the episode (taxonomy may still be educational/self_promo). Distinguish those from technical discussion (company names as examples, not sales).
+
+CONTENT-AWARE TAXONOMY:
+- technical_discussion: Educational content or case studies. Not an ad.
+- educational/self_promo: Host/network/membership/first-party plugs. These ARE ads.
+- promotional_external: External sponsor ads with sales intent, URLs, promo codes, or offers.
+- transition: Brief bumpers that are part of an ad block. Include them.
+
+JSON CONTRACT (strict):
+- Always respond with: {"ads": [...]}
+- Each ads item: {"start_anchor": "<shortest unique verbatim string at the very start of the ad break>", "end_anchor": "<shortest unique verbatim string at the very end of the WHOLE break>", "content_type": "<taxonomy>", "confidence": <0.0-1.0>}
+- start_anchor = the shortest verbatim string at the very start of the ad break that occurs ONLY ONCE in this excerpt. Copy phrasing from the excerpt (punctuation optional).
+- end_anchor = the shortest verbatim string at the very end of the WHOLE stacked break (after ALL stacked promos/CTAs, last words before the show resumes) that occurs ONLY ONCE in this excerpt.
+- If the ad is a single unique phrase, start_anchor and end_anchor may be that same string.
+- Quotes MUST be copied from the excerpt. Do not invent or paraphrase.
+- If there are no ads, respond with: {"ads":[]}
+- Do not emit timestamps.
+
+UNIQUENESS (mandatory):
+- Repeated CTAs are NOT unique and MUST NOT be used as anchors: "listen on the NPR app", "on the NPR app", URLs that appear more than once, "wherever you get your podcasts", "wherever you listen".
+- If a short string repeats, EXTEND it with neighboring verbatim words until the whole string occurs only once.
+- Prefer a unique closer of the LAST promo (e.g. a show name that appears only in the final CTA) over a network-wide CTA.
+
+STACKED BREAKS (do not truncate):
+- Adjacent ads separated by only a few seconds with no show content are ONE break.
+- NPR / network stacks (Show A then Show B then Show C) are one break. end_anchor is the last unique words of the LAST promo, not the first CTA.
+
+DECISION RULES:
+1) Once an ad break starts, follow it to its natural conclusion; include short transitions on both sides.
+2) URLs, promo codes, and "brought to you by" are strong sponsor cues.
+3) Self-promo / membership / sister shows are ads (do not omit them).
+4) Prefer content unless there is a real ad block.
+5) Adjacent reads for the same break are one ad; a later separate break is another ad.
+
+Example:
+Excerpt: Good morning. Support for this podcast comes from Acme. Get your free guide at acme.example/show. Terms apply at acme.example/legal. I just came back from Defcon.
+Output: {"ads":[{"start_anchor":"Support for this podcast comes from Acme","end_anchor":"Terms apply at acme.example/legal","content_type":"promotional_external","confidence":0.95}]}
+
+Stacked example (repeated CTA is illegal as end_anchor):
+Excerpt: This week on Show A. Listen on the NPR app or wherever you get your podcasts. And this week on Show B. Listen on the NPR app or wherever you get Show B. After the break we continue.
+Output: {"ads":[{"start_anchor":"This week on Show A","end_anchor":"wherever you get Show B","content_type":"educational/self_promo","confidence":0.95}]}
+"""
+
+
 def chunk_position_cue(start_seconds: float) -> str:
     mins = int(max(0.0, start_seconds) // 60)
     secs = int(max(0.0, start_seconds) % 60)
@@ -147,6 +193,13 @@ def quote_user_prompt(
             "sentence of the WHOLE stacked break (do not stop at the first "
             "'listen on the NPR app' CTA if another promo follows).\n"
         )
+    elif prompt_version == "v4":
+        extra = (
+            " Return start_anchor and end_anchor: the shortest UNIQUE verbatim "
+            "strings at the very start and very end of the WHOLE stacked break. "
+            "Repeated CTAs ('listen on the NPR app', URLs, 'wherever you get "
+            "your podcasts') are not unique — extend until unique.\n"
+        )
     return (
         f'You are analyzing "{title}". {cue}.{extra}\n'
         "Return only the JSON contract. Transcript excerpt (no timestamps):\n\n"
@@ -177,6 +230,13 @@ def confirm_user_prompt(
             "a few seconds and no show content between them are one break. "
             "Do not stop end_quote at the first 'listen on the NPR app' CTA."
         )
+    elif prompt_version == "v4":
+        extra = (
+            " Return start_anchor / end_anchor: shortest UNIQUE verbatim strings "
+            "at the very start and very end of the WHOLE stacked break after all "
+            "sister-show promos. Repeated CTAs ('listen on the NPR app', URLs, "
+            "'wherever you get your podcasts') are not unique; extend until unique."
+        )
     return (
         f'You are analyzing "{title}". {cue}. This excerpt is a CANDIDATE ad '
         "region plus padding — it may be show content. If there is no ad "
@@ -191,6 +251,8 @@ def confirm_user_prompt(
 
 
 def system_prompt_for(version: str) -> str:
+    if version == "v4":
+        return QUOTE_SYSTEM_PROMPT_V4
     if version == "v3":
         return QUOTE_SYSTEM_PROMPT_V3
     if version == "v2":

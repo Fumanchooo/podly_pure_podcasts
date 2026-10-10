@@ -85,6 +85,11 @@ ABLATIONS = {
         "enable_richer_spotter": True,
         "enable_quote_fallback_bound": True,
     },
+    "unique": {"enable_quote_unique_anchors": True},
+    "unique_merge": {
+        "enable_quote_unique_anchors": True,
+        "enable_spot_merge_calls": True,
+    },
 }
 
 
@@ -586,6 +591,17 @@ def main() -> int:
         },
         "n_episodes": n,
         "live_n": live_n,
+        "reasks": sum(int(row.get("n_reasks") or 0) for row in production.values()),
+        "unique_ok": sum(
+            int(row.get("n_unique_ok") or 0) for row in production.values()
+        ),
+        "unique_fallbacks": sum(
+            int(row.get("n_unique_fallbacks") or 0) for row in production.values()
+        ),
+        "reask_rate": (
+            sum(int(row.get("n_reasks") or 0) for row in production.values())
+            / float(tokens.calls or 1)
+        ),
         "spotter_missed": spotter_summary["missed"],
     }
     live_m = summary["live"]

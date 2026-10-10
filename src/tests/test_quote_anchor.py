@@ -6,15 +6,19 @@ from podcast_processor.quote_anchor import (
     SegmentSpan,
     WordTiming,
     fallback_segment_edge,
+    find_quote_matches,
     is_midstack_cta,
     match_quote_tokens,
     match_quote_with_fallbacks,
     match_quotes_in_order,
     match_rate,
     normalize_tokens,
+    parse_quote_ads,
     resolve_ads,
     token_edit_distance,
     union_adjacent_matches,
+    uniqueness_issues,
+    uniqueness_reask_prompt,
 )
 
 
@@ -628,3 +632,85 @@ def test_fallback_bound_clips_donate_npr_chunk() -> None:
     assert matches[0].start >= 96.0 - 1e-6
     assert matches[0].end <= 105.0 + 1e-6
     assert matches[0].end - matches[0].start < 30.0
+
+
+def _stacked_npr_words() -> list[WordTiming]:
+    return _words(
+        ("This", 1217.0, 1217.2),
+        ("week", 1217.2, 1217.4),
+        ("on", 1217.4, 1217.5),
+        ("Ted", 1217.5, 1217.7),
+        ("Radio", 1217.7, 1218.0),
+        ("Hour.", 1218.0, 1218.4),
+        ("Listen", 1258.0, 1258.3),
+        ("on", 1258.3, 1258.4),
+        ("the", 1258.4, 1258.5),
+        ("NPR", 1258.5, 1258.8),
+        ("app.", 1258.8, 1263.0),
+        ("This", 1288.0, 1288.2),
+        ("is", 1288.2, 1288.3),
+        ("Tony", 1288.3, 1288.6),
+        ("Mosley", 1288.6, 1289.0),
+        ("co-host", 1289.0, 1289.4),
+        ("of", 1289.4, 1289.5),
+        ("Fresh", 1289.5, 1289.8),
+        ("Air.", 1289.8, 1290.2),
+        ("Listen", 1309.0, 1309.2),
+        ("on", 1309.2, 1309.3),
+        ("the", 1309.3, 1309.4),
+        ("NPR", 1309.4, 1309.7),
+        ("app", 1309.7, 1310.0),
+        ("or", 1310.0, 1310.1),
+        ("wherever", 1310.1, 1310.4),
+        ("you", 1310.4, 1310.5),
+        ("get", 1310.5, 1310.7),
+        ("Fresh", 1310.7, 1310.9),
+        ("Air.", 1310.9, 1311.2),
+    )
+
+
+def test_repeated_cta_is_not_unique_fresh_air_closer_is() -> None:
+    words = _stacked_npr_words()
+    cta_hits = find_quote_matches(words, "listen on the NPR app")
+    assert len(cta_hits) >= 2
+    unique_end = find_quote_matches(words, "wherever you get Fresh Air")
+    assert len(unique_end) == 1
+    assert words[unique_end[0][1] - 1].word.lower().startswith("air")
+    unique_start = find_quote_matches(words, "This week on Ted Radio Hour")
+    assert len(unique_start) == 1
+    issues = uniqueness_issues(
+        words,
+        [
+            QuoteAd(
+                start_quote="This week on Ted Radio Hour",
+                end_quote="listen on the NPR app",
+                content_type="educational/self_promo",
+                confidence=0.95,
+            )
+        ],
+    )
+    assert any(item.field == "end_anchor" and item.n_matches >= 2 for item in issues)
+    prompt = uniqueness_reask_prompt(issues)
+    assert "listen on the NPR app" in prompt
+    assert "matched" in prompt
+    ads = parse_quote_ads(
+        '{"ads":[{"start_anchor":"This week on Ted Radio Hour",'
+        '"end_anchor":"wherever you get Fresh Air",'
+        '"content_type":"educational/self_promo","confidence":0.95}]}'
+    )
+    assert ads[0].start_quote.startswith("This week")
+    assert "Fresh Air" in ads[0].end_quote
+    matched = resolve_ads(
+        ads,
+        words,
+        [
+            SegmentSpan(1217.0, 1263.0, "This week on Ted Radio Hour. Listen on the NPR app."),
+            SegmentSpan(1288.0, 1311.2, "This is Tony Mosley co-host of Fresh Air. Listen on the NPR app or wherever you get Fresh Air."),
+        ],
+        chunk_start=1217.0,
+        chunk_end=1311.2,
+        unique_anchors=True,
+    )
+    assert matched
+    assert matched[0].start <= 1218.0
+    assert matched[0].end >= 1310.5

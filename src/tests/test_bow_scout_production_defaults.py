@@ -37,6 +37,8 @@ def test_bow_scout_flag_defaults_off() -> None:
     assert config.enable_richer_spotter is False
     assert DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND is False
     assert config.enable_quote_fallback_bound is False
+    assert DEFAULTS.ENABLE_QUOTE_UNIQUE_ANCHORS is False
+    assert config.enable_quote_unique_anchors is False
 
 
 def test_config_flag_can_be_enabled_without_swapping_defaults() -> None:
@@ -76,3 +78,4 @@ def test_pydantic_config_field_defaults_false() -> None:
     assert Config.model_fields["enable_spot_merge_calls"].default is False
     assert Config.model_fields["enable_richer_spotter"].default is False
     assert Config.model_fields["enable_quote_fallback_bound"].default is False
+    assert Config.model_fields["enable_quote_unique_anchors"].default is False

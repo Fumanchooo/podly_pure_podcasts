@@ -37,6 +37,8 @@ ENABLE_SPOT_MERGE_CALLS = False
 ENABLE_RICHER_SPOTTER = False
 # Clamp unmatched-quote fallback to the spotted region. Default off.
 ENABLE_QUOTE_FALLBACK_BOUND = False
+# Unique start/end anchors in the per-break LLM call. Default off.
+ENABLE_QUOTE_UNIQUE_ANCHORS = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

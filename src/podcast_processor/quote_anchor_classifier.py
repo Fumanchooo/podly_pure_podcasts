@@ -37,6 +37,7 @@ from podcast_processor.ad_spotter import (
 )
 from podcast_processor.quote_anchor import (
     QUOTE_ANCHOR_SOURCE,
+    QuoteAd,
     QuoteMatch,
     SegmentSpan,
     WordTiming,
@@ -45,6 +46,8 @@ from podcast_processor.quote_anchor import (
     parse_quote_ads,
     resolve_ads,
     union_adjacent_matches,
+    uniqueness_issues,
+    uniqueness_reask_prompt,
     word_index_range,
 )
 from podcast_processor.spotter_audio import audio_spot_hits
@@ -90,6 +93,10 @@ def richer_spotter_enabled(config: Config) -> bool:
 
 def quote_fallback_bound_enabled(config: Config) -> bool:
     return bool(getattr(config, "enable_quote_fallback_bound", False))
+
+
+def quote_unique_anchors_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_unique_anchors", False))
 
 
 def quote_anchor_path_enabled(config: Config) -> bool:
@@ -167,13 +174,22 @@ class QuoteAnchorClassifier:
         self.merge_calls = spot_merge_calls_enabled(config)
         self.richer_spotter = richer_spotter_enabled(config)
         self.fallback_bound = quote_fallback_bound_enabled(config)
-        self.prompt_version = "v3" if self.full_sentence else QUOTE_PROMPT_VERSION
+        self.unique_anchors = quote_unique_anchors_enabled(config)
+        if self.unique_anchors:
+            self.prompt_version = "v4"
+        elif self.full_sentence:
+            self.prompt_version = "v3"
+        else:
+            self.prompt_version = QUOTE_PROMPT_VERSION
         self.last_matches: list[QuoteMatch] = []
         self.last_cuts: list[tuple[float, float]] = []
         self.last_input_tokens = 0
         self.last_output_tokens = 0
         self.last_llm_calls = 0
         self.last_extends = 0
+        self.last_reasks = 0
+        self.last_unique_ok = 0
+        self.last_unique_fallbacks = 0
         self.last_candidates: list[CandidateBreak] = []
         self.last_word_whisper_s = 0.0
         self.last_classify_s = 0.0
@@ -191,6 +207,9 @@ class QuoteAnchorClassifier:
         self.last_output_tokens = 0
         self.last_llm_calls = 0
         self.last_extends = 0
+        self.last_reasks = 0
+        self.last_unique_ok = 0
+        self.last_unique_fallbacks = 0
         self.last_candidates = []
         if not transcript_segments:
             self.last_matches = []
@@ -230,13 +249,15 @@ class QuoteAnchorClassifier:
                 chunk=chunk,
                 user=user,
             )
-            ads = [
-                ad
-                for ad in parse_quote_ads(raw)
-                if keep_ad(ad, float(self.config.output.min_confidence))
-            ]
             w0, w1 = word_index_range(
                 loaded, max(0.0, chunk_start - 1.0), chunk_end + 1.0
+            )
+            ads, unique_ok = self._ads_from_llm(
+                post=post,
+                chunk=chunk,
+                user=user,
+                raw=raw,
+                excerpt_words=loaded[w0:w1],
             )
             prior_end = max((item.end for item in matches), default=None)
             chunk_matches = resolve_ads(
@@ -249,8 +270,9 @@ class QuoteAnchorClassifier:
                 word_to=w1,
                 stop_before=prior_end,
                 full_sentence=self.full_sentence,
+                unique_anchors=self.unique_anchors and unique_ok,
             )
-            if self.full_sentence:
+            if self.full_sentence or self.unique_anchors:
                 chunk_matches = union_adjacent_matches(chunk_matches)
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
@@ -258,7 +280,7 @@ class QuoteAnchorClassifier:
                 self._write_identifications(chunk, chunk_matches, model_call)
             matches.extend(chunk_matches)
             idx += len(chunk)
-        if self.full_sentence:
+        if self.full_sentence or self.unique_anchors:
             matches = union_adjacent_matches(matches)
 
         cuts = lexical_cuts_from_matches(
@@ -343,7 +365,7 @@ class QuoteAnchorClassifier:
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
             matches.extend(chunk_matches)
-        if self.full_sentence:
+        if self.full_sentence or self.unique_anchors:
             matches = union_adjacent_matches(matches)
 
         cuts = lexical_cuts_from_matches(
@@ -412,12 +434,14 @@ class QuoteAnchorClassifier:
             raw, model_call = self._complete_chunk(
                 post=post, chunk=chunk, user=user
             )
-            ads = [
-                ad
-                for ad in parse_quote_ads(raw)
-                if keep_ad(ad, float(self.config.output.min_confidence))
-            ]
             w0, w1 = word_index_range(loaded, max(0.0, start - 1.0), end + 1.0)
+            ads, unique_ok = self._ads_from_llm(
+                post=post,
+                chunk=chunk,
+                user=user,
+                raw=raw,
+                excerpt_words=loaded[w0:w1],
+            )
             # Fallback stays on the spotted cluster, not the padded window,
             # so an unmatched quote cannot cut ~100s of neighboring show.
             fallback_start = max(0.0, cand.start - 2.0)
@@ -436,9 +460,10 @@ class QuoteAnchorClassifier:
                 word_to=w1,
                 stop_before=prior_end,
                 full_sentence=self.full_sentence,
+                unique_anchors=self.unique_anchors and unique_ok,
                 fallback_bound=bound,
             )
-            if self.full_sentence:
+            if self.full_sentence or self.unique_anchors:
                 matches = union_adjacent_matches(matches)
             if model_call is not None:
                 self._write_identifications(chunk, matches, model_call)
@@ -467,9 +492,44 @@ class QuoteAnchorClassifier:
                 break
             extends += 1
         result = last_good or matches
-        if self.full_sentence:
+        if self.full_sentence or self.unique_anchors:
             result = union_adjacent_matches(result)
         return result, extends
+
+    def _keep(self, ads: list[QuoteAd]) -> list[QuoteAd]:
+        min_conf = float(self.config.output.min_confidence)
+        return [ad for ad in ads if keep_ad(ad, min_conf)]
+
+    def _ads_from_llm(
+        self,
+        *,
+        post: Post,
+        chunk: list[TranscriptSegment],
+        user: str,
+        raw: str,
+        excerpt_words: list[WordTiming],
+    ) -> tuple[list[QuoteAd], bool]:
+        ads = self._keep(parse_quote_ads(raw))
+        if not self.unique_anchors or not ads:
+            return ads, True
+        issues = uniqueness_issues(excerpt_words, ads)
+        if not issues:
+            self.last_unique_ok += 1
+            return ads, True
+        self.last_reasks += 1
+        reask_user = user + uniqueness_reask_prompt(issues)
+        raw2, _model_call = self._complete_chunk(
+            post=post, chunk=chunk, user=reask_user
+        )
+        ads2 = self._keep(parse_quote_ads(raw2))
+        if ads2 and not uniqueness_issues(excerpt_words, ads2):
+            self.last_unique_ok += 1
+            return ads2, True
+        self.last_unique_fallbacks += 1
+        self.logger.info(
+            "unique-anchor fallback after re-ask; using first-best quotes"
+        )
+        return ads2 or ads, False
 
     def load_words(
         self,
@@ -591,7 +651,7 @@ class QuoteAnchorClassifier:
                     ],
                     timeout=int(getattr(self.config, "openai_timeout", 300) or 300),
                     response_format={"type": "json_object"},
-                    max_tokens=1024 if self.full_sentence else 512,
+                    max_tokens=1024 if (self.full_sentence or self.unique_anchors) else 512,
                     reasoning_effort="low",
                     api_key=self.config.llm_api_key,
                 )

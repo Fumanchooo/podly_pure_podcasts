@@ -175,6 +175,15 @@ class Config(BaseModel):
             "region so a miss cannot cut far beyond the candidate. Default off."
         ),
     )
+    enable_quote_unique_anchors: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_UNIQUE_ANCHORS,
+        description=(
+            "Ask the confirm LLM for the shortest unique verbatim start_anchor "
+            "and end_anchor of each ad break. Verify uniqueness in the excerpt "
+            "(fuzzy); re-ask once on collision/miss, then fall back to first-"
+            "best quote matching. Default off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

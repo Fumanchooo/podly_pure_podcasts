@@ -543,6 +543,7 @@ def to_pydantic_config() -> PydanticConfig:
         enable_spot_merge_calls=bool(DEFAULTS.ENABLE_SPOT_MERGE_CALLS),
         enable_richer_spotter=bool(DEFAULTS.ENABLE_RICHER_SPOTTER),
         enable_quote_fallback_bound=bool(DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND),
+        enable_quote_unique_anchors=bool(DEFAULTS.ENABLE_QUOTE_UNIQUE_ANCHORS),
         enable_bow_scout_gemini_confirm=bool(
             DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM
         ),
@@ -723,6 +724,13 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     )
     if env_fallback_bound is not None:
         cfg.enable_quote_fallback_bound = env_fallback_bound
+
+    env_unique_anchors = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_UNIQUE_ANCHORS"),
+        env_name="ENABLE_QUOTE_UNIQUE_ANCHORS",
+    )
+    if env_unique_anchors is not None:
+        cfg.enable_quote_unique_anchors = env_unique_anchors
 
 
 def _apply_remote_whisper_runtime_overrides(whisper: RemoteWhisperConfig) -> None:

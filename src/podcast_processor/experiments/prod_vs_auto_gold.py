@@ -147,6 +147,7 @@ def production_config(
     enable_spot_merge_calls: bool = False,
     enable_richer_spotter: bool = False,
     enable_quote_fallback_bound: bool = False,
+    enable_quote_unique_anchors: bool = False,
 ) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
@@ -160,6 +161,7 @@ def production_config(
         enable_spot_merge_calls=enable_spot_merge_calls,
         enable_richer_spotter=enable_richer_spotter,
         enable_quote_fallback_bound=enable_quote_fallback_bound,
+        enable_quote_unique_anchors=enable_quote_unique_anchors,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
@@ -706,6 +708,9 @@ def run_quote_anchor_production_cut(
         "n_llm_calls": classifier.last_llm_calls,
         "n_candidates": len(classifier.last_candidates),
         "n_extends": classifier.last_extends,
+        "n_reasks": classifier.last_reasks,
+        "n_unique_ok": classifier.last_unique_ok,
+        "n_unique_fallbacks": classifier.last_unique_fallbacks,
         "spot_then_confirm": bool(
             getattr(config, "enable_spot_then_confirm", False)
         ),

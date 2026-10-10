@@ -304,6 +304,146 @@ def match_quote_with_fallbacks(
     return None
 
 
+def _match_unique_anchor(
+    words: list[WordTiming],
+    quote: str,
+    *,
+    search_from: int = 0,
+    search_to: int | None = None,
+    threshold: float = MATCH_THRESHOLD,
+) -> tuple[int, int, float] | None:
+    """Whisper-tolerant match without the short-CTA suffix fallback."""
+    hit = match_quote_tokens_robust(
+        words,
+        quote,
+        search_from=search_from,
+        search_to=search_to,
+        threshold=threshold,
+        min_tokens=MIN_QUOTE_TOKENS,
+    )
+    if hit is not None:
+        return hit
+    return match_quote_tokens(
+        words,
+        quote,
+        search_from=search_from,
+        search_to=search_to,
+        threshold=threshold,
+        min_tokens=MIN_QUOTE_TOKENS,
+    )
+
+
+def find_quote_matches(
+    words: list[WordTiming],
+    quote: str,
+    *,
+    search_from: int = 0,
+    search_to: int | None = None,
+    threshold: float = MATCH_THRESHOLD,
+) -> list[tuple[int, int, float]]:
+    """Non-overlapping fuzzy hits of quote in excerpt words (Whisper-tolerant)."""
+    hits: list[tuple[int, int, float]] = []
+    cursor = search_from
+    guard = 0
+    n = max(1, len(words))
+    while guard < n:
+        guard += 1
+        hit = _match_unique_anchor(
+            words,
+            quote,
+            search_from=cursor,
+            search_to=search_to,
+            threshold=threshold,
+        )
+        if hit is None:
+            break
+        hits.append(hit)
+        nxt = hit[1]
+        if nxt <= cursor:
+            nxt = cursor + 1
+        cursor = nxt
+    return hits
+
+
+def quote_match_context(
+    words: list[WordTiming],
+    start_i: int,
+    end_i: int,
+    *,
+    pad: int = 8,
+) -> str:
+    lo = max(0, start_i - pad)
+    hi = min(len(words), end_i + pad)
+    t0 = words[start_i].start if 0 <= start_i < len(words) else 0.0
+    text = " ".join(item.word for item in words[lo:hi])
+    return f"[{t0:.0f}s] {text}"
+
+
+@dataclass(frozen=True)
+class AnchorIssue:
+    field: str
+    quote: str
+    n_matches: int
+    contexts: tuple[str, ...]
+
+
+def uniqueness_issues(
+    words: list[WordTiming],
+    ads: list[QuoteAd],
+) -> list[AnchorIssue]:
+    """Anchors that are unmatched or occur more than once in excerpt words."""
+    issues: list[AnchorIssue] = []
+    for ad in ads:
+        seen: set[str] = set()
+        for field, quote in (
+            ("start_anchor", ad.start_quote),
+            ("end_anchor", ad.end_quote),
+        ):
+            key = f"{field}:{quote}"
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(normalize_tokens(quote)) < MIN_QUOTE_TOKENS:
+                issues.append(AnchorIssue(field, quote, 0, ()))
+                continue
+            hits = find_quote_matches(words, quote)
+            if len(hits) == 1:
+                continue
+            ctx = tuple(
+                quote_match_context(words, hit[0], hit[1]) for hit in hits[:8]
+            )
+            issues.append(AnchorIssue(field, quote, len(hits), ctx))
+    return issues
+
+
+def uniqueness_reask_prompt(issues: list[AnchorIssue]) -> str:
+    lines = [
+        "",
+        "PREVIOUS ANCHORS REJECTED. Each start_anchor and end_anchor MUST occur "
+        "exactly once in this excerpt (fuzzy match on the words).",
+        "Repeated CTAs are NOT unique and must not be used: 'listen on the NPR "
+        "app', URLs, 'wherever you get your podcasts'. Extend the verbatim "
+        "string until it occurs only once.",
+        "end_anchor must be the last unique words of the WHOLE stacked break "
+        "(after all sister-show promos/CTAs), not the first CTA.",
+        "Offending:",
+    ]
+    for issue in issues:
+        shown = issue.quote if issue.quote else "<empty>"
+        if issue.n_matches == 0:
+            lines.append(f"- {issue.field} {shown!r} unmatched in the excerpt")
+            continue
+        lines.append(
+            f"- {issue.field} {shown!r} matched {issue.n_matches} times:"
+        )
+        for ctx in issue.contexts:
+            lines.append(f"    {ctx}")
+    lines.append(
+        "Return only the JSON contract with unique start_anchor and end_anchor."
+    )
+    return "\n".join(lines)
+
+
 def is_midstack_cta(quote: str) -> bool:
     """True if the quote is a typical first-CTA in a stacked sister-show read."""
     folded = " ".join(normalize_tokens(quote))
@@ -359,6 +499,43 @@ def union_adjacent_matches(
     return kept
 
 
+def _match_ordered_quote(
+    words: list[WordTiming],
+    quote: str,
+    *,
+    search_from: int,
+    search_to: int | None,
+    threshold: float,
+    full_sentence: bool,
+    unique_anchors: bool,
+    tail: bool,
+) -> tuple[int, int, float] | None:
+    if unique_anchors:
+        return _match_unique_anchor(
+            words,
+            quote,
+            search_from=search_from,
+            search_to=search_to,
+            threshold=threshold,
+        )
+    if full_sentence:
+        return match_quote_with_fallbacks(
+            words,
+            quote,
+            search_from=search_from,
+            search_to=search_to,
+            threshold=threshold,
+            tail=tail,
+        )
+    return match_quote_tokens(
+        words,
+        quote,
+        search_from=search_from,
+        search_to=search_to,
+        threshold=threshold,
+    )
+
+
 def match_quotes_in_order(
     words: list[WordTiming],
     ads: list[QuoteAd],
@@ -367,27 +544,21 @@ def match_quotes_in_order(
     search_to: int | None = None,
     threshold: float = MATCH_THRESHOLD,
     full_sentence: bool = False,
+    unique_anchors: bool = False,
 ) -> list[tuple[QuoteAd, tuple[int, int, float] | None]]:
     cursor = search_from
     results: list[tuple[QuoteAd, tuple[int, int, float] | None]] = []
     for ad in ads:
-        if full_sentence:
-            start_hit = match_quote_with_fallbacks(
-                words,
-                ad.start_quote,
-                search_from=cursor,
-                search_to=search_to,
-                threshold=threshold,
-                tail=False,
-            )
-        else:
-            start_hit = match_quote_tokens(
-                words,
-                ad.start_quote,
-                search_from=cursor,
-                search_to=search_to,
-                threshold=threshold,
-            )
+        start_hit = _match_ordered_quote(
+            words,
+            ad.start_quote,
+            search_from=cursor,
+            search_to=search_to,
+            threshold=threshold,
+            full_sentence=full_sentence,
+            unique_anchors=unique_anchors,
+            tail=False,
+        )
         if start_hit is None:
             results.append((ad, None))
             continue
@@ -395,23 +566,16 @@ def match_quotes_in_order(
             results.append((ad, start_hit))
             cursor = start_hit[1]
             continue
-        if full_sentence:
-            end_hit = match_quote_with_fallbacks(
-                words,
-                ad.end_quote,
-                search_from=start_hit[1],
-                search_to=search_to,
-                threshold=threshold,
-                tail=True,
-            )
-        else:
-            end_hit = match_quote_tokens(
-                words,
-                ad.end_quote,
-                search_from=start_hit[1],
-                search_to=search_to,
-                threshold=threshold,
-            )
+        end_hit = _match_ordered_quote(
+            words,
+            ad.end_quote,
+            search_from=start_hit[1],
+            search_to=search_to,
+            threshold=threshold,
+            full_sentence=full_sentence,
+            unique_anchors=unique_anchors,
+            tail=True,
+        )
         if end_hit is None:
             # Keep the start hit so resolve_ads can grow the end via adjacent
             # segments (Planet Money 1922 Sources & Methods; end quote often
@@ -598,6 +762,7 @@ def resolve_ads(
     threshold: float = MATCH_THRESHOLD,
     stop_before: float | None = None,
     full_sentence: bool = False,
+    unique_anchors: bool = False,
     fallback_bound: tuple[float, float] | None = None,
 ) -> list[QuoteMatch]:
     """Map each reported ad to a cut. Never drop: chunk span is last resort."""
@@ -608,6 +773,7 @@ def resolve_ads(
         search_to=word_to,
         threshold=threshold,
         full_sentence=full_sentence,
+        unique_anchors=unique_anchors,
     )
     matches: list[QuoteMatch] = []
     prior = stop_before
@@ -743,8 +909,12 @@ def parse_quote_ads(raw: str) -> list[QuoteAd]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        start_q = str(row.get("start_quote") or "").strip()
-        end_q = str(row.get("end_quote") or start_q).strip()
+        start_q = str(
+            row.get("start_anchor") or row.get("start_quote") or ""
+        ).strip()
+        end_q = str(
+            row.get("end_anchor") or row.get("end_quote") or start_q
+        ).strip()
         if not start_q:
             continue
         try:
