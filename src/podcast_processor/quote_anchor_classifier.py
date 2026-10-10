@@ -29,17 +29,25 @@ from podcast_processor.experiments.word_transcripts import (
     transcribe_word_timestamps,
     words_from_payload,
 )
-from podcast_processor.ad_spotter import CandidateBreak, spot_candidates
+from podcast_processor.ad_spotter import (
+    CandidateBreak,
+    fallback_window,
+    intra_episode_ngrams,
+    spot_candidates,
+)
 from podcast_processor.quote_anchor import (
     QUOTE_ANCHOR_SOURCE,
     QuoteMatch,
     SegmentSpan,
     WordTiming,
+    is_midstack_cta,
     keep_ad,
     parse_quote_ads,
     resolve_ads,
+    union_adjacent_matches,
     word_index_range,
 )
+from podcast_processor.spotter_audio import audio_spot_hits
 from podcast_processor.quote_anchor_prompt import (
     confirm_user_prompt,
     quote_user_prompt,
@@ -66,6 +74,22 @@ def quote_anchor_boundaries_enabled(config: Config) -> bool:
 
 def spot_then_confirm_enabled(config: Config) -> bool:
     return bool(getattr(config, "enable_spot_then_confirm", False))
+
+
+def quote_full_sentence_quotes_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_full_sentence_quotes", False))
+
+
+def spot_merge_calls_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_spot_merge_calls", False))
+
+
+def richer_spotter_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_richer_spotter", False))
+
+
+def quote_fallback_bound_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_fallback_bound", False))
 
 
 def quote_anchor_path_enabled(config: Config) -> bool:
@@ -139,6 +163,11 @@ class QuoteAnchorClassifier:
         self.extra_phrases = extra_phrases
         self.extra_names = extra_names
         self.spot_pad_s = spot_pad_s
+        self.full_sentence = quote_full_sentence_quotes_enabled(config)
+        self.merge_calls = spot_merge_calls_enabled(config)
+        self.richer_spotter = richer_spotter_enabled(config)
+        self.fallback_bound = quote_fallback_bound_enabled(config)
+        self.prompt_version = "v3" if self.full_sentence else QUOTE_PROMPT_VERSION
         self.last_matches: list[QuoteMatch] = []
         self.last_cuts: list[tuple[float, float]] = []
         self.last_input_tokens = 0
@@ -194,7 +223,7 @@ class QuoteAnchorClassifier:
                 title=str(post.title or ""),
                 start_seconds=chunk_start,
                 texts=[seg.text or "" for seg in chunk],
-                prompt_version=QUOTE_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
             )
             raw, model_call = self._complete_chunk(
                 post=post,
@@ -219,13 +248,18 @@ class QuoteAnchorClassifier:
                 word_from=w0,
                 word_to=w1,
                 stop_before=prior_end,
+                full_sentence=self.full_sentence,
             )
+            if self.full_sentence:
+                chunk_matches = union_adjacent_matches(chunk_matches)
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
             if model_call is not None:
                 self._write_identifications(chunk, chunk_matches, model_call)
             matches.extend(chunk_matches)
             idx += len(chunk)
+        if self.full_sentence:
+            matches = union_adjacent_matches(matches)
 
         cuts = lexical_cuts_from_matches(
             matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
@@ -267,11 +301,22 @@ class QuoteAnchorClassifier:
         gaps: list[tuple[float, float]],
         started: float,
     ) -> list[tuple[float, float]]:
+        extra_hits = []
+        ngrams = self.ngram_phrases
+        if self.richer_spotter:
+            intra = intra_episode_ngrams(loaded)
+            ngrams = tuple(dict.fromkeys((*ngrams, *intra)))
+            loud, speak = audio_spot_hits(post.unprocessed_audio_path)
+            extra_hits.extend(loud)
+            extra_hits.extend(speak)
         candidates, stats = spot_candidates(
             loaded,
             extra_phrases=self.extra_phrases,
             extra_names=self.extra_names,
-            ngram_phrases=self.ngram_phrases,
+            ngram_phrases=ngrams,
+            extra_hits=extra_hits or None,
+            drop_weak=self.merge_calls,
+            merge_calls=self.merge_calls,
         )
         self.last_candidates = candidates
         ep_end = float(transcript_segments[-1].end_time or 0.0)
@@ -296,6 +341,8 @@ class QuoteAnchorClassifier:
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
             matches.extend(chunk_matches)
+        if self.full_sentence:
+            matches = union_adjacent_matches(matches)
 
         cuts = lexical_cuts_from_matches(
             matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
@@ -358,7 +405,7 @@ class QuoteAnchorClassifier:
                 title=str(post.title or ""),
                 start_seconds=start,
                 texts=[seg.text or "" for seg in chunk],
-                prompt_version=QUOTE_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
             )
             raw, model_call = self._complete_chunk(
                 post=post, chunk=chunk, user=user
@@ -373,6 +420,10 @@ class QuoteAnchorClassifier:
             # so an unmatched quote cannot cut ~100s of neighboring show.
             fallback_start = max(0.0, cand.start - 2.0)
             fallback_end = min(ep_end, max(cand.end + 2.0, fallback_start + 0.5))
+            bound: tuple[float, float] | None = None
+            if self.fallback_bound:
+                bound = fallback_window(cand, ep_end)
+                fallback_start, fallback_end = bound
             matches = resolve_ads(
                 ads,
                 loaded,
@@ -382,7 +433,11 @@ class QuoteAnchorClassifier:
                 word_from=w0,
                 word_to=w1,
                 stop_before=prior_end,
+                full_sentence=self.full_sentence,
+                fallback_bound=bound,
             )
+            if self.full_sentence:
+                matches = union_adjacent_matches(matches)
             if model_call is not None:
                 self._write_identifications(chunk, matches, model_call)
             if matches:
@@ -395,15 +450,24 @@ class QuoteAnchorClassifier:
             ):
                 start = max(0.0, start - SPOT_EXTEND_S)
                 grew = True
-            if end < ep_end - 1e-6 and any(
+            near_end = any(
                 item.end >= end - SPOT_EDGE_SLACK_S for item in matches
-            ):
+            )
+            midstack = self.full_sentence and any(
+                is_midstack_cta(item.ad.end_quote)
+                and cand.end > item.end + 2.0
+                for item in matches
+            )
+            if end < ep_end - 1e-6 and (near_end or midstack):
                 end = min(ep_end, end + SPOT_EXTEND_S)
                 grew = True
             if not grew:
                 break
             extends += 1
-        return last_good or matches, extends
+        result = last_good or matches
+        if self.full_sentence:
+            result = union_adjacent_matches(result)
+        return result, extends
 
     def load_words(
         self,
@@ -478,7 +542,7 @@ class QuoteAnchorClassifier:
         chunk: list[TranscriptSegment],
         user: str,
     ) -> tuple[str, ModelCall | None]:
-        system_prompt = system_prompt_for(QUOTE_PROMPT_VERSION)
+        system_prompt = system_prompt_for(self.prompt_version)
         model_call = self._upsert_model_call(
             post=post,
             first_seq_num=int(chunk[0].sequence_num),
@@ -525,7 +589,7 @@ class QuoteAnchorClassifier:
                     ],
                     timeout=int(getattr(self.config, "openai_timeout", 300) or 300),
                     response_format={"type": "json_object"},
-                    max_tokens=512,
+                    max_tokens=1024 if self.full_sentence else 512,
                     reasoning_effort="low",
                     api_key=self.config.llm_api_key,
                 )

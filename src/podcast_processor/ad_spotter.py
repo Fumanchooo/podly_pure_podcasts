@@ -25,6 +25,41 @@ MAX_CLUSTER_S = 150.0
 MAX_CANDIDATES = 20
 NGRAM_N = 6
 NGRAM_MIN_EPISODES = 2
+INTRA_NGRAM_MIN_REPEATS = 2
+INTRA_NGRAM_MAX_REPEATS = 8
+# Wider than CLUSTER_GAP_S so adjacent clusters (sister-show stacks with
+# a short show-free gap, or two reads in one break) share one LLM call.
+MERGE_CALL_GAP_S = 70.0
+FALLBACK_PAD_S = 4.0
+FALLBACK_MAX_SPAN_S = 28.0
+STRONG_KINDS = frozenset({"cue", "url", "promo", "ngram", "loudness", "speaker"})
+ADISH_NGRAM_TOKENS = frozenset(
+    {
+        "sponsor",
+        "sponsored",
+        "promo",
+        "code",
+        "listen",
+        "support",
+        "donate",
+        "membership",
+        "plus",
+        "app",
+        "wherever",
+        "podcasts",
+        "podcast",
+        "slash",
+        "com",
+        "org",
+        "brought",
+        "partner",
+        "trial",
+        "download",
+        "subscribe",
+        "advertisement",
+        "ad",
+    }
+)
 URL_RE = re.compile(
     r"\b[a-z0-9][a-z0-9\-]*\.(?:com|org|net|io|fm)\b",
     re.I,
@@ -172,6 +207,7 @@ def spot_hits(
     *,
     extra_phrases: tuple[str, ...] = (),
     extra_names: tuple[str, ...] = (),
+    exclude_names: tuple[str, ...] = (),
 ) -> list[SpotHit]:
     if not words:
         return []
@@ -181,14 +217,27 @@ def spot_hits(
         hits.extend(
             _hits_for_phrase(words, stream, phrase, kind="cue", weight=1.2)
         )
-    names = (*SPONSOR_NAMES, *extra_names)
+    blocked = {fold_alnum(n) for n in exclude_names if fold_alnum(n)}
+    names = tuple(
+        n
+        for n in (*SPONSOR_NAMES, *extra_names)
+        if fold_alnum(n) not in blocked
+    )
     for name in names:
         if " " in name or "." in name:
             hits.extend(
                 _hits_for_phrase(words, stream, name, kind="sponsor", weight=1.6)
             )
-    folds = set(name_folds())
-    folds.update(fold_alnum(n) for n in extra_names if len(fold_alnum(n)) >= 4)
+    folds = {
+        item
+        for item in name_folds()
+        if item not in blocked
+    }
+    folds.update(
+        fold_alnum(n)
+        for n in extra_names
+        if len(fold_alnum(n)) >= 4 and fold_alnum(n) not in blocked
+    )
     # Sliding folded windows of 1–4 words.
     for i, word in enumerate(words):
         for width in (1, 2, 3, 4):
@@ -389,25 +438,195 @@ def ngram_hits(
     return hits
 
 
+def adish_ngram(phrase: str) -> bool:
+    toks = phrase.split()
+    return any(tok in ADISH_NGRAM_TOKENS for tok in toks)
+
+
+def intra_episode_ngrams(
+    words: list[WordTiming],
+    *,
+    n: int = NGRAM_N,
+    min_repeats: int = INTRA_NGRAM_MIN_REPEATS,
+    max_repeats: int = INTRA_NGRAM_MAX_REPEATS,
+    adish_only: bool = True,
+) -> tuple[str, ...]:
+    """Phrases that repeat inside one episode (typical host-read ads)."""
+    toks = [t for _, t in _token_stream(words)]
+    counts: Counter[str] = Counter()
+    for i in range(0, max(0, len(toks) - n + 1)):
+        chunk = toks[i : i + n]
+        if sum(1 for t in chunk if len(t) >= 3) < max(3, n - 2):
+            continue
+        key = ngram_key(chunk)
+        if adish_only and not adish_ngram(key):
+            continue
+        counts[key] += 1
+    return tuple(
+        key
+        for key, n_rep in counts.items()
+        if min_repeats <= n_rep <= max_repeats
+    )
+
+
+def is_weak_candidate(cand: CandidateBreak) -> bool:
+    """Lone company name with no cue/url/ngram/loudness/speaker corroboration."""
+    kinds = set(cand.kinds)
+    if kinds & STRONG_KINDS:
+        return False
+    return kinds <= {"sponsor"}
+
+
+def drop_weak_candidates(
+    candidates: list[CandidateBreak],
+) -> list[CandidateBreak]:
+    return [cand for cand in candidates if not is_weak_candidate(cand)]
+
+
+def merge_candidates_for_calls(
+    candidates: list[CandidateBreak],
+    *,
+    gap_s: float = MERGE_CALL_GAP_S,
+    max_span_s: float = MAX_CLUSTER_S,
+) -> list[CandidateBreak]:
+    """Merge candidate spots close together into one LLM window."""
+    if not candidates:
+        return []
+    ordered = sorted(candidates, key=lambda c: c.start)
+    groups: list[list[CandidateBreak]] = [[ordered[0]]]
+    for cand in ordered[1:]:
+        cur = groups[-1]
+        span0 = cur[0].start
+        if cand.start - cur[-1].end <= gap_s and cand.end - span0 <= max_span_s:
+            cur.append(cand)
+        else:
+            groups.append([cand])
+    merged: list[CandidateBreak] = []
+    for group in groups:
+        hits = tuple(h for cand in group for h in cand.hits)
+        kinds = tuple(sorted({h.kind for h in hits}))
+        merged.append(
+            CandidateBreak(
+                start=min(c.start for c in group),
+                end=max(c.end for c in group),
+                hits=hits,
+                kinds=kinds,
+                weight=sum(c.weight for c in group),
+            )
+        )
+    return merged
+
+
+def fallback_window(
+    cand: CandidateBreak,
+    ep_end: float,
+    *,
+    pad_s: float = FALLBACK_PAD_S,
+    max_span_s: float = FALLBACK_MAX_SPAN_S,
+) -> tuple[float, float]:
+    """Tight bound around the spotted hits so a quote miss cannot grow far."""
+    if not cand.hits:
+        start = max(0.0, cand.start - pad_s)
+        end = min(ep_end, max(cand.end + pad_s, start + 0.5))
+        if end - start > max_span_s:
+            end = min(ep_end, start + max_span_s)
+        return start, end
+    strong = [h for h in cand.hits if h.kind in STRONG_KINDS or h.weight >= 1.5]
+    core = strong or list(cand.hits)
+    mid = min(core, key=lambda h: -h.weight)
+    start = max(0.0, min(h.start for h in core) - pad_s)
+    end = min(ep_end, max(h.end for h in core) + pad_s)
+    if end - start > max_span_s:
+        start = max(0.0, mid.start - max_span_s / 2.0)
+        end = min(ep_end, start + max_span_s)
+        start = max(0.0, end - max_span_s)
+    if end <= start:
+        end = min(ep_end, start + 0.5)
+    return start, end
+
+
+def names_in_text(text: str, names: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    blob = fold_alnum(text)
+    if not blob:
+        return ()
+    found: list[str] = []
+    for name in names if names is not None else SPONSOR_NAMES:
+        folded = fold_alnum(name)
+        if len(folded) >= 4 and folded in blob:
+            found.append(name)
+    return tuple(found)
+
+
+def signal_prf(
+    hits: list[SpotHit],
+    gold_spans: list[tuple[float, float, str, str]],
+    *,
+    min_overlap_s: float = 0.5,
+) -> dict[str, float]:
+    """Precision/recall of a spotter signal vs gold ad spans."""
+    n_gold = len(gold_spans)
+    if n_gold == 0:
+        return {"precision": 1.0 if not hits else 0.0, "recall": 1.0, "n_hits": 0, "n_gold": 0}
+    tp_gold = 0
+    for start, end, _show, _text in gold_spans:
+        if any(
+            min(end, hit.end) - max(start, hit.start) >= min_overlap_s for hit in hits
+        ):
+            tp_gold += 1
+    tp_hits = 0
+    for hit in hits:
+        if any(
+            min(end, hit.end) - max(start, hit.start) >= min_overlap_s
+            for start, end, _show, _text in gold_spans
+        ):
+            tp_hits += 1
+    precision = 1.0 if not hits else tp_hits / float(len(hits))
+    recall = tp_gold / float(n_gold)
+    return {
+        "precision": precision,
+        "recall": recall,
+        "n_hits": float(len(hits)),
+        "n_gold": float(n_gold),
+        "tp_hits": float(tp_hits),
+        "tp_gold": float(tp_gold),
+    }
+
+
 def spot_candidates(
     words: list[WordTiming],
     *,
     extra_phrases: tuple[str, ...] = (),
     extra_names: tuple[str, ...] = (),
+    exclude_names: tuple[str, ...] = (),
     ngram_phrases: tuple[str, ...] = (),
+    extra_hits: list[SpotHit] | None = None,
     gap_s: float = CLUSTER_GAP_S,
     max_span_s: float = MAX_CLUSTER_S,
     max_candidates: int = MAX_CANDIDATES,
+    drop_weak: bool = False,
+    merge_calls: bool = False,
+    merge_gap_s: float = MERGE_CALL_GAP_S,
 ) -> tuple[list[CandidateBreak], SpotterStats]:
     hits = spot_hits(
-        words, extra_phrases=extra_phrases, extra_names=extra_names
+        words,
+        extra_phrases=extra_phrases,
+        extra_names=extra_names,
+        exclude_names=exclude_names,
     )
     if ngram_phrases:
         hits.extend(ngram_hits(words, ngram_phrases))
-        hits = _dedupe_hits(hits)
+    if extra_hits:
+        hits.extend(extra_hits)
+    hits = _dedupe_hits(hits)
     candidates = cluster_hits(
         hits, gap_s=gap_s, max_span_s=max_span_s, max_candidates=max_candidates
     )
+    if drop_weak:
+        candidates = drop_weak_candidates(candidates)
+    if merge_calls:
+        candidates = merge_candidates_for_calls(
+            candidates, gap_s=merge_gap_s, max_span_s=max_span_s
+        )
     stats = SpotterStats(
         n_hits=len(hits),
         n_candidates=len(candidates),

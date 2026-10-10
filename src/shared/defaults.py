@@ -27,6 +27,16 @@ ENABLE_QUOTE_ANCHOR_BOUNDARIES = False
 # Spot-then-confirm: $0 lexicon spotter + one LLM call per candidate
 # (padded region), not a full-episode chunk walk. Default off.
 ENABLE_SPOT_THEN_CONFIRM = False
+# Full first/last sentence quotes (not 5–8 words). Default off.
+ENABLE_QUOTE_FULL_SENTENCE_QUOTES = False
+# Merge nearby spotted candidates into one LLM call and drop lone
+# company-name spots unless another signal corroborates. Default off.
+ENABLE_SPOT_MERGE_CALLS = False
+# Extra $0 spotter signals: intra-episode n-grams, loudness steps,
+# speaker-change points. Default off.
+ENABLE_RICHER_SPOTTER = False
+# Clamp unmatched-quote fallback to the spotted region. Default off.
+ENABLE_QUOTE_FALLBACK_BOUND = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

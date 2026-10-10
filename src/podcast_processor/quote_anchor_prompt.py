@@ -65,6 +65,53 @@ Output: {"ads":[{"start_quote":"Support for this show comes from NetSuite","end_
 """
 
 
+QUOTE_SYSTEM_PROMPT_V3 = """Your job is to identify complete advertisement BLOCKS in podcast transcript excerpts.
+
+CRITICAL: self-promo, network/sister-show promos, first-party app plugs, and membership asks COUNT AS ADS anywhere in the episode (taxonomy may still be educational/self_promo). Distinguish those from technical discussion (company names as examples, not sales).
+
+CONTENT-AWARE TAXONOMY:
+- technical_discussion: Educational content or case studies. Not an ad.
+- educational/self_promo: Host/network/membership/first-party plugs. These ARE ads.
+- promotional_external: External sponsor ads with sales intent, URLs, promo codes, or offers.
+- transition: Brief bumpers that are part of an ad block. Include them.
+
+JSON CONTRACT (strict):
+- Always respond with: {"ads": [...]}
+- Each ads item: {"start_quote": "<verbatim first full sentence of the ad break>", "end_quote": "<verbatim last full sentence of the WHOLE stacked ad break>", "content_type": "<taxonomy>", "confidence": <0.0-1.0>}
+- start_quote MUST be the entire first sentence of the ad block, copied from the excerpt, including lead-ins such as "support for this podcast comes from…", "this episode is brought to you by…", "this week on…".
+- end_quote MUST be the entire last sentence BEFORE the show resumes. For stacked sister-show / network promos, that is the last sentence of the LAST promo in the stack, not the first CTA.
+- If the ad is a single sentence, start_quote and end_quote are that same sentence.
+- Quotes MUST be copied from the excerpt (punctuation optional). Do not invent or paraphrase.
+- If there are no ads, respond with: {"ads":[]}
+- Do not emit timestamps.
+
+STACKED BREAKS (do not truncate):
+- Adjacent ads separated by only a few seconds with no show content are ONE break. Union them.
+- NPR / network stacks (Ted Radio Hour then Fresh Air, Up First then Politics, etc.) are one break.
+- Do NOT stop end_quote at the first "listen on the NPR app" / "wherever you get your podcasts" CTA if another sister-show promo still follows.
+- end_quote = last sentence of the WHOLE stacked break.
+
+QUOTE THE FULL AD BREAK:
+- The first sentence is the handoff INTO the ad when that lead-in is present. If the excerpt starts already inside the ad, use the first full sentence present.
+- The last sentence is the last ad copy BEFORE the show resumes.
+
+DECISION RULES:
+1) Once an ad break starts, follow it to its natural conclusion; include short transitions on both sides.
+2) URLs, promo codes, and "brought to you by" are strong sponsor cues.
+3) Self-promo / membership / sister shows are ads (do not omit them).
+4) Prefer content unless there is a real ad block.
+5) Adjacent reads for the same break are one ad; a later separate break is another ad.
+
+Example:
+Excerpt: Good morning. Support for this podcast comes from NetSuite. Get your free guide at netsuite.com/darknet. Terms apply. I just came back from Defcon.
+Output: {"ads":[{"start_quote":"Support for this podcast comes from NetSuite.","end_quote":"Terms apply.","content_type":"promotional_external","confidence":0.95}]}
+
+Stacked example:
+Excerpt: This week on Ted Radio Hour, listen on the NPR app. And this week on Fresh Air, Terry talks with a guest. Listen on the NPR app or wherever you get your podcasts. After the break we continue.
+Output: {"ads":[{"start_quote":"This week on Ted Radio Hour, listen on the NPR app.","end_quote":"Listen on the NPR app or wherever you get your podcasts.","content_type":"educational/self_promo","confidence":0.95}]}
+"""
+
+
 def chunk_position_cue(start_seconds: float) -> str:
     mins = int(max(0.0, start_seconds) // 60)
     secs = int(max(0.0, start_seconds) % 60)
@@ -94,6 +141,12 @@ def quote_user_prompt(
             " Quote the handoff into each ad break and the last words before "
             "the show resumes (outro/CTA tail).\n"
         )
+    elif prompt_version == "v3":
+        extra = (
+            " Quote the FULL first sentence of the break and the FULL last "
+            "sentence of the WHOLE stacked break (do not stop at the first "
+            "'listen on the NPR app' CTA if another promo follows).\n"
+        )
     return (
         f'You are analyzing "{title}". {cue}.{extra}\n'
         "Return only the JSON contract. Transcript excerpt (no timestamps):\n\n"
@@ -117,6 +170,13 @@ def confirm_user_prompt(
             " Quote the handoff into each ad break and the last words before "
             "the show resumes (outro/CTA tail)."
         )
+    elif prompt_version == "v3":
+        extra = (
+            " Quote the FULL first sentence and the FULL last sentence of the "
+            "WHOLE stacked break. Adjacent sister-show/network promos with only "
+            "a few seconds and no show content between them are one break. "
+            "Do not stop end_quote at the first 'listen on the NPR app' CTA."
+        )
     return (
         f'You are analyzing "{title}". {cue}. This excerpt is a CANDIDATE ad '
         "region plus padding — it may be show content. If there is no ad "
@@ -124,13 +184,15 @@ def confirm_user_prompt(
         f'return {{"ads":[]}}.{extra}\n'
         "If there is an ad break, quote the FULL break (not just the cue). "
         "If the ad continues past the start or end of this excerpt, still "
-        "quote the first/last words that ARE present.\n"
+        "quote the first/last sentence (or words) that ARE present.\n"
         "Return only the JSON contract. Transcript excerpt (no timestamps):\n\n"
         f"{body}\n"
     )
 
 
 def system_prompt_for(version: str) -> str:
+    if version == "v3":
+        return QUOTE_SYSTEM_PROMPT_V3
     if version == "v2":
         return QUOTE_SYSTEM_PROMPT_V2
     return QUOTE_SYSTEM_PROMPT

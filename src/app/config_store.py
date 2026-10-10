@@ -537,6 +537,12 @@ def to_pydantic_config() -> PydanticConfig:
             DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES
         ),
         enable_spot_then_confirm=bool(DEFAULTS.ENABLE_SPOT_THEN_CONFIRM),
+        enable_quote_full_sentence_quotes=bool(
+            DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES
+        ),
+        enable_spot_merge_calls=bool(DEFAULTS.ENABLE_SPOT_MERGE_CALLS),
+        enable_richer_spotter=bool(DEFAULTS.ENABLE_RICHER_SPOTTER),
+        enable_quote_fallback_bound=bool(DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND),
         enable_bow_scout_gemini_confirm=bool(
             DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM
         ),
@@ -689,6 +695,34 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     )
     if env_spot_confirm is not None:
         cfg.enable_spot_then_confirm = env_spot_confirm
+
+    env_full_sentence = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_FULL_SENTENCE_QUOTES"),
+        env_name="ENABLE_QUOTE_FULL_SENTENCE_QUOTES",
+    )
+    if env_full_sentence is not None:
+        cfg.enable_quote_full_sentence_quotes = env_full_sentence
+
+    env_spot_merge = _parse_bool(
+        os.environ.get("ENABLE_SPOT_MERGE_CALLS"),
+        env_name="ENABLE_SPOT_MERGE_CALLS",
+    )
+    if env_spot_merge is not None:
+        cfg.enable_spot_merge_calls = env_spot_merge
+
+    env_richer = _parse_bool(
+        os.environ.get("ENABLE_RICHER_SPOTTER"),
+        env_name="ENABLE_RICHER_SPOTTER",
+    )
+    if env_richer is not None:
+        cfg.enable_richer_spotter = env_richer
+
+    env_fallback_bound = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_FALLBACK_BOUND"),
+        env_name="ENABLE_QUOTE_FALLBACK_BOUND",
+    )
+    if env_fallback_bound is not None:
+        cfg.enable_quote_fallback_bound = env_fallback_bound
 
 
 def _apply_remote_whisper_runtime_overrides(whisper: RemoteWhisperConfig) -> None:

@@ -224,6 +224,8 @@ def lexicon_words_for_segment(
         return out
     # Count mismatch: keep lexicon labels but time them on the DTW speech
     # span, not the full Whisper segment (which often includes a music bed).
+    if not sane:
+        return linear
     t0 = max(start, min(float(row["start"]) for row in sane))
     t1 = min(end, max(float(row["end"]) for row in sane))
     if t1 - t0 < 0.05:

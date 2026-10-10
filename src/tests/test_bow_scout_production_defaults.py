@@ -29,6 +29,14 @@ def test_bow_scout_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
     assert config.enable_spot_then_confirm is False
     assert spot_then_confirm_enabled(config) is False
+    assert DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES is False
+    assert config.enable_quote_full_sentence_quotes is False
+    assert DEFAULTS.ENABLE_SPOT_MERGE_CALLS is False
+    assert config.enable_spot_merge_calls is False
+    assert DEFAULTS.ENABLE_RICHER_SPOTTER is False
+    assert config.enable_richer_spotter is False
+    assert DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND is False
+    assert config.enable_quote_fallback_bound is False
 
 
 def test_config_flag_can_be_enabled_without_swapping_defaults() -> None:
@@ -64,3 +72,7 @@ def test_pydantic_config_field_defaults_false() -> None:
     field = Config.model_fields["enable_bow_scout_gemini_confirm"]
     assert field.default is False
     assert Config.model_fields["enable_spot_then_confirm"].default is False
+    assert Config.model_fields["enable_quote_full_sentence_quotes"].default is False
+    assert Config.model_fields["enable_spot_merge_calls"].default is False
+    assert Config.model_fields["enable_richer_spotter"].default is False
+    assert Config.model_fields["enable_quote_fallback_bound"].default is False

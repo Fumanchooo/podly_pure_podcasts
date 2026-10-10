@@ -60,6 +60,19 @@ def test_lexicon_mismatch_times_on_dtw_span_not_full_segment() -> None:
     assert locked[-1]["end"] <= 478.05
 
 
+def test_lexicon_empty_sane_does_not_crash() -> None:
+    from podcast_processor.experiments.word_transcripts import lexicon_words_for_segment
+
+    locked = lexicon_words_for_segment(
+        10.0,
+        12.0,
+        "Hello world.",
+        dtw_words=[{"word": "x", "start": 0.0, "end": 0.01}],
+    )
+    assert locked
+    assert locked[0]["word"] == "Hello"
+
+
 def test_reanchor_packs_leading_bed_stretch() -> None:
     from podcast_processor.experiments.word_transcripts import reanchor_words_to_speech
     from podcast_processor.quote_anchor import WordTiming

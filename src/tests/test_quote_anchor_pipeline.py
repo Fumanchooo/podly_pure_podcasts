@@ -90,9 +90,17 @@ def _seed_post(title: str = "Darknet") -> tuple[Post, list[TranscriptSegment]]:
 def test_quote_anchor_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES is False
     assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
+    assert DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES is False
+    assert DEFAULTS.ENABLE_SPOT_MERGE_CALLS is False
+    assert DEFAULTS.ENABLE_RICHER_SPOTTER is False
+    assert DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND is False
     config = create_standard_test_config()
     assert config.enable_quote_anchor_boundaries is False
     assert config.enable_spot_then_confirm is False
+    assert config.enable_quote_full_sentence_quotes is False
+    assert config.enable_spot_merge_calls is False
+    assert config.enable_richer_spotter is False
+    assert config.enable_quote_fallback_bound is False
     assert quote_anchor_boundaries_enabled(config) is False
     assert spot_then_confirm_enabled(config) is False
     assert quote_anchor_path_enabled(config) is False

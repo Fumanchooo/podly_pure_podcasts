@@ -207,3 +207,131 @@ def test_padding_edge_extends_once(app: Flask) -> None:
         )
         assert classifier.last_extends == 1
         assert classifier.last_llm_calls >= 2
+
+
+def test_spot_v2_flags_default_off() -> None:
+    assert DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES is False
+    assert DEFAULTS.ENABLE_SPOT_MERGE_CALLS is False
+    assert DEFAULTS.ENABLE_RICHER_SPOTTER is False
+    assert DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND is False
+
+
+def test_merge_calls_one_llm_for_nearby_spots(app: Flask) -> None:
+    force_local_writer()
+    with app.app_context():
+        rows = [
+            (0.0, 6.0, "This week on Ted Radio Hour listen on the NPR app."),
+            (8.0, 16.0, "And this week on Fresh Air listen on the NPR app or wherever you get your podcasts."),
+            (20.0, 24.0, "After the break we continue the story."),
+        ]
+        post, segments = _seed("Planet Money", rows)
+        calls: list[str] = []
+
+        def complete(_system: str, user: str) -> str:
+            calls.append(user)
+            return json.dumps(
+                {
+                    "ads": [
+                        {
+                            "start_quote": "This week on Ted Radio Hour listen on the NPR app.",
+                            "end_quote": "Listen on the NPR app or wherever you get your podcasts.",
+                            "content_type": "educational/self_promo",
+                            "confidence": 0.95,
+                        }
+                    ]
+                }
+            )
+
+        config = create_standard_test_config().model_copy(
+            update={
+                "enable_spot_then_confirm": True,
+                "enable_quote_anchor_boundaries": True,
+                "enable_spot_merge_calls": True,
+                "enable_quote_full_sentence_quotes": True,
+                "whisper": WhisperTestConfig(),
+            }
+        )
+        classifier = QuoteAnchorClassifier(
+            config=config,
+            db_session=db.session,
+            complete_fn=complete,
+            spot_pad_s=4.0,
+        )
+        cuts = classifier.classify(
+            transcript_segments=segments,
+            post=post,
+            words=_words_from_rows(rows),
+        )
+        assert classifier.last_llm_calls == 1 + classifier.last_extends
+        assert len(classifier.last_candidates) == 1
+        assert cuts
+        assert cuts[0][0] <= 1.0
+        assert cuts[0][1] >= 14.0
+
+
+def test_midstack_cta_extends_once(app: Flask) -> None:
+    force_local_writer()
+    with app.app_context():
+        rows = [
+            (0.0, 5.0, "This week on Ted Radio Hour."),
+            (6.0, 10.0, "Listen on the NPR app."),
+            (12.0, 16.0, "And this week on Fresh Air."),
+            (17.0, 24.0, "Listen on the NPR app or wherever you get your podcasts."),
+            (80.0, 90.0, "The hosts continue the interview with more details."),
+        ]
+        post, segments = _seed("Stacked", rows)
+        calls = {"n": 0}
+
+        def complete(_system: str, user: str) -> str:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return json.dumps(
+                    {
+                        "ads": [
+                            {
+                                "start_quote": "This week on Ted Radio Hour.",
+                                "end_quote": "Listen on the NPR app.",
+                                "content_type": "educational/self_promo",
+                                "confidence": 0.95,
+                            }
+                        ]
+                    }
+                )
+            return json.dumps(
+                {
+                    "ads": [
+                        {
+                            "start_quote": "This week on Ted Radio Hour.",
+                            "end_quote": "Listen on the NPR app or wherever you get your podcasts.",
+                            "content_type": "educational/self_promo",
+                            "confidence": 0.95,
+                        }
+                    ]
+                }
+            )
+
+        config = create_standard_test_config().model_copy(
+            update={
+                "enable_spot_then_confirm": True,
+                "enable_quote_anchor_boundaries": True,
+                "enable_quote_full_sentence_quotes": True,
+                "whisper": WhisperTestConfig(),
+            }
+        )
+        classifier = QuoteAnchorClassifier(
+            config=config,
+            db_session=db.session,
+            complete_fn=complete,
+            spot_pad_s=3.0,
+        )
+        classifier.classify(
+            transcript_segments=segments,
+            post=post,
+            words=_words_from_rows(rows),
+        )
+        assert classifier.last_extends == 1
+        assert calls["n"] >= 2
+        assert classifier.last_cuts
+        assert classifier.last_cuts[0][1] >= 20.0
+        assert classifier.last_cuts
+        assert classifier.last_cuts[0][1] >= 20.0

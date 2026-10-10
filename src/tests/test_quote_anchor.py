@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from podcast_processor.quote_anchor import (
     QuoteAd,
+    QuoteMatch,
     SegmentSpan,
     WordTiming,
     fallback_segment_edge,
+    is_midstack_cta,
     match_quote_tokens,
+    match_quote_with_fallbacks,
     match_quotes_in_order,
     match_rate,
     normalize_tokens,
     resolve_ads,
     token_edit_distance,
+    union_adjacent_matches,
 )
 
 
@@ -467,3 +471,160 @@ def test_segment_fallback_when_dai_missing_from_word_stream() -> None:
     assert matches[0].method == "segment_fallback"
     assert matches[0].start == 404.36
     assert matches[0].end == 459.36
+
+
+def test_full_sentence_match_uses_first_and_last_word() -> None:
+    words = _words(
+        ("Support", 10.0, 10.3),
+        ("for", 10.3, 10.5),
+        ("this", 10.5, 10.7),
+        ("podcast", 10.7, 11.1),
+        ("comes", 11.1, 11.4),
+        ("from", 11.4, 11.6),
+        ("Acme.", 11.6, 12.0),
+        ("Visit", 20.0, 20.3),
+        ("acme.com/save", 20.3, 21.0),
+        ("today.", 21.0, 21.4),
+        ("Terms", 21.4, 21.7),
+        ("apply.", 21.7, 22.0),
+    )
+    ads = [
+        QuoteAd(
+            start_quote="Support for this podcast comes from Acme.",
+            end_quote="Terms apply.",
+            content_type="promotional_external",
+            confidence=0.95,
+        )
+    ]
+    ordered = match_quotes_in_order(words, ads, full_sentence=True)
+    assert ordered[0][1] is not None
+    i0, i1, score = ordered[0][1]
+    assert words[i0].word == "Support"
+    assert words[i1 - 1].word == "apply."
+    assert score >= 0.72
+
+
+def test_full_sentence_fallback_to_short_head_on_paraphrase() -> None:
+    words = _words(
+        ("Support", 1.0, 1.2),
+        ("for", 1.2, 1.4),
+        ("this", 1.4, 1.6),
+        ("podcast", 1.6, 2.0),
+        ("comes", 2.0, 2.3),
+        ("from", 2.3, 2.5),
+        ("Acme", 2.5, 2.9),
+        ("Insurance.", 2.9, 3.4),
+    )
+    paraphrased = (
+        "Support for this podcast comes from Acme Insurance and all their "
+        "wonderful partners around the country today."
+    )
+    hit = match_quote_with_fallbacks(words, paraphrased, tail=False)
+    assert hit is not None
+    assert words[hit[0]].word == "Support"
+
+
+def test_stacked_sister_shows_union_to_last_sentence() -> None:
+    """Planet Money 1217–1311: do not stop at the first NPR-app CTA."""
+    words = _words(
+        ("This", 1217.0, 1217.2),
+        ("week", 1217.2, 1217.4),
+        ("on", 1217.4, 1217.5),
+        ("Ted", 1217.5, 1217.7),
+        ("Radio", 1217.7, 1218.0),
+        ("Hour.", 1218.0, 1218.4),
+        ("Listen", 1255.0, 1255.3),
+        ("on", 1255.3, 1255.4),
+        ("the", 1255.4, 1255.5),
+        ("NPR", 1255.5, 1255.8),
+        ("app.", 1255.8, 1263.0),
+        ("And", 1264.0, 1264.2),
+        ("this", 1264.2, 1264.4),
+        ("week", 1264.4, 1264.6),
+        ("on", 1264.6, 1264.7),
+        ("Fresh", 1264.7, 1265.0),
+        ("Air.", 1265.0, 1265.4),
+        ("Listen", 1305.0, 1305.3),
+        ("on", 1305.3, 1305.4),
+        ("the", 1305.4, 1305.5),
+        ("NPR", 1305.5, 1305.8),
+        ("app", 1305.8, 1306.1),
+        ("or", 1306.1, 1306.2),
+        ("wherever", 1306.2, 1306.6),
+        ("you", 1306.6, 1306.7),
+        ("get", 1306.7, 1306.9),
+        ("your", 1306.9, 1307.1),
+        ("podcasts.", 1307.1, 1311.0),
+    )
+    first = QuoteMatch(
+        ad=QuoteAd(
+            start_quote="This week on Ted Radio Hour.",
+            end_quote="Listen on the NPR app.",
+            content_type="educational/self_promo",
+            confidence=0.95,
+        ),
+        start=1217.0,
+        end=1263.0,
+        method="word",
+        score=0.9,
+    )
+    second = QuoteMatch(
+        ad=QuoteAd(
+            start_quote="And this week on Fresh Air.",
+            end_quote="Listen on the NPR app or wherever you get your podcasts.",
+            content_type="educational/self_promo",
+            confidence=0.95,
+        ),
+        start=1264.0,
+        end=1311.0,
+        method="word",
+        score=0.9,
+    )
+    unioned = union_adjacent_matches([first, second], gap_s=8.0)
+    assert len(unioned) == 1
+    assert unioned[0].start == 1217.0
+    assert unioned[0].end == 1311.0
+    assert "wherever" in unioned[0].ad.end_quote.lower()
+    assert is_midstack_cta("Listen on the NPR app.")
+    ads = [
+        QuoteAd(
+            start_quote="This week on Ted Radio Hour.",
+            end_quote="Listen on the NPR app or wherever you get your podcasts.",
+            content_type="educational/self_promo",
+            confidence=0.95,
+        )
+    ]
+    ordered = match_quotes_in_order(words, ads, full_sentence=True)
+    assert ordered[0][1] is not None
+    i0, i1, _score = ordered[0][1]
+    assert words[i0].word == "This"
+    assert "podcasts" in words[i1 - 1].word.lower()
+
+
+def test_fallback_bound_clips_donate_npr_chunk() -> None:
+    words = _words(("Give", 100.0, 100.4), ("at", 100.4, 100.6), ("donate.npr.org", 100.6, 101.2))
+    segments = [
+        SegmentSpan(71.0, 90.0, "Headlines from around the country continue here."),
+        SegmentSpan(100.0, 102.0, "Give at donate.npr.org"),
+        SegmentSpan(120.0, 155.0, "More show content after the membership ask."),
+    ]
+    ad = QuoteAd(
+        start_quote="totally missing sponsor sentence here xyzzy",
+        end_quote="also missing end quote abcdef",
+        content_type="educational/self_promo",
+        confidence=0.95,
+    )
+    matches = resolve_ads(
+        [ad],
+        words,
+        segments,
+        chunk_start=71.0,
+        chunk_end=155.0,
+        word_from=0,
+        word_to=len(words),
+        fallback_bound=(96.0, 105.0),
+    )
+    assert matches[0].method in {"segment_fallback", "chunk_fallback"}
+    assert matches[0].start >= 96.0 - 1e-6
+    assert matches[0].end <= 105.0 + 1e-6
+    assert matches[0].end - matches[0].start < 30.0

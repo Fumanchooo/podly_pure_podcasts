@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 MATCH_THRESHOLD = 0.72
 MIN_QUOTE_TOKENS = 3
 QUOTE_ANCHOR_SOURCE = "quote_anchor"
+SHORT_QUOTE_TOKENS = 6
+STACK_GAP_S = 8.0
+_STOP_FIRST = frozenset(
+    {"this", "the", "a", "an", "and", "so", "well", "okay", "ok", "hey"}
+)
+_MIDSTACK_CTA = (
+    "listen on the npr app",
+    "listen on the",
+    "on the npr app",
+    "wherever you get your podcasts",
+    "wherever you listen",
+    "npr app or wherever",
+)
 # Forward pack for a missing end quote (Planet Money 1922 stub).
 START_ONLY_FORWARD_SPAN_S = 10.0
 # Backward pack across a leftover EOF chunk (live Indicator AARP behind
@@ -102,10 +115,11 @@ def match_quote_tokens(
     search_from: int = 0,
     search_to: int | None = None,
     threshold: float = MATCH_THRESHOLD,
+    min_tokens: int = MIN_QUOTE_TOKENS,
 ) -> tuple[int, int, float] | None:
     """Return (start_idx, end_idx_exclusive, score) for the first-best quote hit."""
     needle = normalize_tokens(quote)
-    if len(needle) < MIN_QUOTE_TOKENS:
+    if len(needle) < min_tokens:
         return None
     # Every alphanumeric piece in the word (Shopify.com → shopify, com;
     # S-I-N-C-H → s,i,n,c,h). Using only parts[0] dropped URL/spell-out
@@ -121,7 +135,7 @@ def match_quote_tokens(
     if search_to is not None:
         while hi > lo and tokens[hi - 1][0] >= search_to:
             hi -= 1
-    if hi - lo < MIN_QUOTE_TOKENS:
+    if hi - lo < min_tokens:
         return None
 
     n = len(needle)
@@ -134,7 +148,7 @@ def match_quote_tokens(
             continue
         best_here: tuple[int, int, float] | None = None
         best_width = 0
-        for width in range(max(MIN_QUOTE_TOKENS, n - 2), n + 3):
+        for width in range(max(min_tokens, n - 2), n + 3):
             j = i + width
             if j > hi:
                 break
@@ -159,6 +173,192 @@ def match_quote_tokens(
     return None
 
 
+def _first_token_hit(hay: str, needle: str) -> bool:
+    if hay == needle:
+        return True
+    if min(len(hay), len(needle)) >= 5:
+        return token_edit_distance(list(hay), list(needle)) <= 1
+    return False
+
+
+def _window_slack(n: int) -> int:
+    if n < 8:
+        return 2
+    return max(2, min(8, n // 4))
+
+
+def match_quote_tokens_robust(
+    words: list[WordTiming],
+    quote: str,
+    *,
+    search_from: int = 0,
+    search_to: int | None = None,
+    threshold: float = MATCH_THRESHOLD,
+    min_tokens: int = MIN_QUOTE_TOKENS,
+) -> tuple[int, int, float] | None:
+    """Longer-quote match: typo-tolerant first token and a wider window."""
+    needle = normalize_tokens(quote)
+    if len(needle) < min_tokens:
+        return None
+    tokens: list[tuple[int, str]] = []
+    for idx, word in enumerate(words):
+        for part in normalize_tokens(word.word):
+            tokens.append((idx, part))
+    lo = 0
+    while lo < len(tokens) and tokens[lo][0] < search_from:
+        lo += 1
+    hi = len(tokens)
+    if search_to is not None:
+        while hi > lo and tokens[hi - 1][0] >= search_to:
+            hi -= 1
+    if hi - lo < min_tokens:
+        return None
+
+    n = len(needle)
+    slack = _window_slack(n)
+    first = needle[0]
+    for i in range(lo, hi):
+        if not _first_token_hit(tokens[i][1], first):
+            continue
+        best_here: tuple[int, int, float] | None = None
+        best_width = 0
+        for width in range(max(min_tokens, n - slack), n + slack + 1):
+            j = i + width
+            if j > hi:
+                break
+            window = [tok for _, tok in tokens[i:j]]
+            score = _window_score(needle, window)
+            if score < threshold:
+                continue
+            word_i = tokens[i][0]
+            word_j = tokens[j - 1][0] + 1
+            if (
+                best_here is None
+                or score > best_here[2] + 1e-9
+                or (
+                    abs(score - best_here[2]) <= 1e-9
+                    and abs(width - n) < abs(best_width - n)
+                )
+            ):
+                best_here = (word_i, word_j, score)
+                best_width = width
+        if best_here is not None:
+            return best_here
+    return None
+
+
+def match_quote_with_fallbacks(
+    words: list[WordTiming],
+    quote: str,
+    *,
+    search_from: int = 0,
+    search_to: int | None = None,
+    threshold: float = MATCH_THRESHOLD,
+    tail: bool = False,
+) -> tuple[int, int, float] | None:
+    """Full-sentence match, then the first/last few words of that sentence."""
+    min_tokens = 2
+    hit = match_quote_tokens_robust(
+        words,
+        quote,
+        search_from=search_from,
+        search_to=search_to,
+        threshold=threshold,
+        min_tokens=min_tokens,
+    )
+    if hit is not None:
+        return hit
+    hit = match_quote_tokens(
+        words,
+        quote,
+        search_from=search_from,
+        search_to=search_to,
+        threshold=threshold,
+        min_tokens=min_tokens,
+    )
+    if hit is not None:
+        return hit
+    tokens = normalize_tokens(quote)
+    if len(tokens) <= SHORT_QUOTE_TOKENS:
+        return None
+    short = tokens[-SHORT_QUOTE_TOKENS:] if tail else tokens[:SHORT_QUOTE_TOKENS]
+    hit = match_quote_tokens(
+        words,
+        " ".join(short),
+        search_from=search_from,
+        search_to=search_to,
+        threshold=threshold,
+    )
+    if hit is not None:
+        return hit
+    skip = tokens[1:] if not tail else tokens[:-1]
+    if tokens and tokens[0] in _STOP_FIRST and len(skip) >= MIN_QUOTE_TOKENS:
+        piece = skip[-SHORT_QUOTE_TOKENS:] if tail else skip[:SHORT_QUOTE_TOKENS]
+        return match_quote_tokens(
+            words,
+            " ".join(piece),
+            search_from=search_from,
+            search_to=search_to,
+            threshold=threshold,
+        )
+    return None
+
+
+def is_midstack_cta(quote: str) -> bool:
+    """True if the quote is a typical first-CTA in a stacked sister-show read."""
+    folded = " ".join(normalize_tokens(quote))
+    if not folded:
+        return False
+    return any(cue in folded for cue in _MIDSTACK_CTA)
+
+
+def union_adjacent_matches(
+    matches: list[QuoteMatch],
+    *,
+    gap_s: float = STACK_GAP_S,
+) -> list[QuoteMatch]:
+    """Union adjacent ads separated by only a few seconds (stacked break)."""
+    if not matches:
+        return []
+    ordered = sorted(matches, key=lambda item: (item.start, item.end))
+    kept: list[QuoteMatch] = [ordered[0]]
+    for item in ordered[1:]:
+        prev = kept[-1]
+        if item.start - prev.end > gap_s:
+            kept.append(item)
+            continue
+        start = min(prev.start, item.start)
+        end = max(prev.end, item.end)
+        method = (
+            "word"
+            if prev.method == "word" and item.method == "word"
+            else prev.method
+        )
+        lo = start
+        hi = end
+        for bound in (prev.bound_start, item.bound_start):
+            if bound is not None:
+                lo = min(lo, bound)
+        for bound in (prev.bound_end, item.bound_end):
+            if bound is not None:
+                hi = max(hi, bound)
+        kept[-1] = QuoteMatch(
+            ad=QuoteAd(
+                start_quote=prev.ad.start_quote,
+                end_quote=item.ad.end_quote,
+                content_type=prev.ad.content_type,
+                confidence=max(prev.ad.confidence, item.ad.confidence),
+            ),
+            start=start,
+            end=end,
+            method=method,
+            score=min(prev.score, item.score),
+            bound_start=lo,
+            bound_end=hi,
+        )
+    return kept
+
+
 def match_quotes_in_order(
     words: list[WordTiming],
     ads: list[QuoteAd],
@@ -166,17 +366,28 @@ def match_quotes_in_order(
     search_from: int = 0,
     search_to: int | None = None,
     threshold: float = MATCH_THRESHOLD,
+    full_sentence: bool = False,
 ) -> list[tuple[QuoteAd, tuple[int, int, float] | None]]:
     cursor = search_from
     results: list[tuple[QuoteAd, tuple[int, int, float] | None]] = []
     for ad in ads:
-        start_hit = match_quote_tokens(
-            words,
-            ad.start_quote,
-            search_from=cursor,
-            search_to=search_to,
-            threshold=threshold,
-        )
+        if full_sentence:
+            start_hit = match_quote_with_fallbacks(
+                words,
+                ad.start_quote,
+                search_from=cursor,
+                search_to=search_to,
+                threshold=threshold,
+                tail=False,
+            )
+        else:
+            start_hit = match_quote_tokens(
+                words,
+                ad.start_quote,
+                search_from=cursor,
+                search_to=search_to,
+                threshold=threshold,
+            )
         if start_hit is None:
             results.append((ad, None))
             continue
@@ -184,13 +395,23 @@ def match_quotes_in_order(
             results.append((ad, start_hit))
             cursor = start_hit[1]
             continue
-        end_hit = match_quote_tokens(
-            words,
-            ad.end_quote,
-            search_from=start_hit[1],
-            search_to=search_to,
-            threshold=threshold,
-        )
+        if full_sentence:
+            end_hit = match_quote_with_fallbacks(
+                words,
+                ad.end_quote,
+                search_from=start_hit[1],
+                search_to=search_to,
+                threshold=threshold,
+                tail=True,
+            )
+        else:
+            end_hit = match_quote_tokens(
+                words,
+                ad.end_quote,
+                search_from=start_hit[1],
+                search_to=search_to,
+                threshold=threshold,
+            )
         if end_hit is None:
             # Keep the start hit so resolve_ads can grow the end via adjacent
             # segments (Planet Money 1922 Sources & Methods; end quote often
@@ -348,6 +569,23 @@ def fallback_segment_edge(
     return start, end, MATCH_THRESHOLD
 
 
+def _clip_fallback(
+    start: float,
+    end: float,
+    bound: tuple[float, float] | None,
+) -> tuple[float, float]:
+    if bound is None:
+        return start, end
+    lo, hi = bound
+    if hi <= lo:
+        return start, end
+    clipped_start = min(max(start, lo), hi)
+    clipped_end = min(max(end, lo), hi)
+    if clipped_end <= clipped_start:
+        return lo, hi
+    return clipped_start, clipped_end
+
+
 def resolve_ads(
     ads: list[QuoteAd],
     words: list[WordTiming],
@@ -359,6 +597,8 @@ def resolve_ads(
     word_to: int | None = None,
     threshold: float = MATCH_THRESHOLD,
     stop_before: float | None = None,
+    full_sentence: bool = False,
+    fallback_bound: tuple[float, float] | None = None,
 ) -> list[QuoteMatch]:
     """Map each reported ad to a cut. Never drop: chunk span is last resort."""
     ordered = match_quotes_in_order(
@@ -367,6 +607,7 @@ def resolve_ads(
         search_from=word_from,
         search_to=word_to,
         threshold=threshold,
+        full_sentence=full_sentence,
     )
     matches: list[QuoteMatch] = []
     prior = stop_before
@@ -411,6 +652,7 @@ def resolve_ads(
             logger.warning("word match collapsed for %r-%r", ad.start_quote, ad.end_quote)
         if seg_bound is not None:
             start, end, score = seg_bound
+            start, end = _clip_fallback(start, end, fallback_bound)
             logger.info(
                 "quote match miss; segment-edge fallback %s-%.1f-%.1f",
                 ad.start_quote[:40],
@@ -430,21 +672,22 @@ def resolve_ads(
             )
             prior = max(prior or end, end)
             continue
+        fb_start, fb_end = _clip_fallback(chunk_start, chunk_end, fallback_bound)
         logger.warning(
             "quote unmatched; chunk fallback %.1f-%.1f for %r",
-            chunk_start,
-            chunk_end,
+            fb_start,
+            fb_end,
             ad.start_quote[:40],
         )
-        chunk_end_t = max(chunk_end, chunk_start + 0.5)
+        chunk_end_t = max(fb_end, fb_start + 0.5)
         matches.append(
             QuoteMatch(
                 ad=ad,
-                start=chunk_start,
+                start=fb_start,
                 end=chunk_end_t,
                 method="chunk_fallback",
                 score=0.0,
-                bound_start=chunk_start,
+                bound_start=fb_start,
                 bound_end=chunk_end_t,
             )
         )

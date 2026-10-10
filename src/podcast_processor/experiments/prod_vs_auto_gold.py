@@ -143,6 +143,10 @@ def production_config(
     *,
     enable_quote_anchor_boundaries: bool = False,
     enable_spot_then_confirm: bool = False,
+    enable_quote_full_sentence_quotes: bool = False,
+    enable_spot_merge_calls: bool = False,
+    enable_richer_spotter: bool = False,
+    enable_quote_fallback_bound: bool = False,
 ) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
@@ -152,6 +156,10 @@ def production_config(
         enable_bow_scout_gemini_confirm=False,
         enable_quote_anchor_boundaries=enable_quote_anchor_boundaries,
         enable_spot_then_confirm=enable_spot_then_confirm,
+        enable_quote_full_sentence_quotes=enable_quote_full_sentence_quotes,
+        enable_spot_merge_calls=enable_spot_merge_calls,
+        enable_richer_spotter=enable_richer_spotter,
+        enable_quote_fallback_bound=enable_quote_fallback_bound,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),

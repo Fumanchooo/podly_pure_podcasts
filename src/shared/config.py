@@ -145,6 +145,36 @@ class Config(BaseModel):
             "break with padded context. Default off. Scout confirm stays off."
         ),
     )
+    enable_quote_full_sentence_quotes: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_FULL_SENTENCE_QUOTES,
+        description=(
+            "Ask the confirm LLM for the verbatim first and last full "
+            "sentence of each ad break (lead-in / last sentence of a stacked "
+            "break). Match fuzzily with a short-quote fallback. Default off."
+        ),
+    )
+    enable_spot_merge_calls: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_MERGE_CALLS,
+        description=(
+            "Merge nearby spotter candidates into one LLM call and drop lone "
+            "company-name spots unless another cue/signal corroborates. "
+            "Default off."
+        ),
+    )
+    enable_richer_spotter: bool = Field(
+        default=DEFAULTS.ENABLE_RICHER_SPOTTER,
+        description=(
+            "Add intra-episode repeated n-grams, loudness step changes, and "
+            "cheap speaker-change cues to the $0 spotter. Default off."
+        ),
+    )
+    enable_quote_fallback_bound: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND,
+        description=(
+            "Clamp unmatched-quote segment/chunk fallback to the spotted "
+            "region so a miss cannot cut far beyond the candidate. Default off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

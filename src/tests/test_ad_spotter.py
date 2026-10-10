@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from podcast_processor.ad_spotter import (
+    drop_weak_candidates,
     gold_misses,
+    intra_episode_ngrams,
+    is_weak_candidate,
+    merge_candidates_for_calls,
+    names_in_text,
     repeated_ngrams,
     spot_candidates,
     spot_hits,
@@ -103,3 +108,63 @@ def test_repeated_ngrams_across_episodes() -> None:
     b = _words("Later this week on Sources and Methods we talk again")
     phrases = repeated_ngrams({"ep1": a, "ep2": b}, n=4, min_episodes=2)
     assert any("this week on sources" in p for p in phrases)
+
+
+def test_intra_episode_ngrams_catch_repeated_ad_read() -> None:
+    words = _words(
+        "Visit donate npr org to support public media. Later visit donate npr org again."
+    )
+    phrases = intra_episode_ngrams(words, n=4, min_repeats=2)
+    assert any("donate" in p and "npr" in p for p in phrases)
+
+
+def test_drop_lone_company_name_keeps_sponsored_read() -> None:
+    weak = _words("The engineers at Microsoft built a database.")
+    strong = _words("This episode is sponsored by NetSuite. Visit netsuite.com slash demo.")
+    weak_cands, _ = spot_candidates(weak)
+    strong_cands, _ = spot_candidates(strong)
+    assert weak_cands
+    assert all(is_weak_candidate(c) for c in weak_cands)
+    assert drop_weak_candidates(weak_cands) == []
+    kept = drop_weak_candidates(strong_cands)
+    assert kept
+    assert not any(is_weak_candidate(c) for c in kept)
+
+
+def test_merge_candidates_close_together() -> None:
+    words = _words(
+        "This week on Ted Radio Hour listen on the NPR app. "
+        "And this week on Fresh Air listen on the NPR app or wherever you get your podcasts."
+    )
+    cands, _ = spot_candidates(words, gap_s=0.05, max_span_s=5.0)
+    # Force two clusters then merge.
+    if len(cands) < 2:
+        from podcast_processor.ad_spotter import CandidateBreak, SpotHit
+
+        cands = [
+            CandidateBreak(
+                start=0.0,
+                end=1.0,
+                hits=(SpotHit(0.0, 1.0, "cue", "this week on", 1.2),),
+                kinds=("cue",),
+                weight=1.2,
+            ),
+            CandidateBreak(
+                start=8.0,
+                end=10.0,
+                hits=(SpotHit(8.0, 10.0, "cue", "listen on the npr app", 1.2),),
+                kinds=("cue",),
+                weight=1.2,
+            ),
+        ]
+    merged = merge_candidates_for_calls(cands, gap_s=18.0)
+    assert len(merged) == 1
+    assert merged[0].end >= merged[0].start
+
+
+def test_exclude_names_drops_leaked_sponsors() -> None:
+    words = _words("This episode is sponsored by NetSuite today.")
+    hits = spot_hits(words, exclude_names=("netsuite", "NetSuite"))
+    assert not any(h.kind == "sponsor" and "netsuite" in h.cue for h in hits)
+    mentioned = names_in_text("visit netsuite.com slash darknet")
+    assert any("netsuite" in n.lower() for n in mentioned)
