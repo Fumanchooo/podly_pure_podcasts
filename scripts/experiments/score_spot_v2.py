@@ -476,7 +476,7 @@ def main() -> int:
                 if not audio.is_file():
                     logging.warning("missing audio %s", show_id)
                     continue
-                remaining = budget.remaining - tracker.usd
+                remaining = budget.remaining
                 if remaining < 0.02 and not args.require_llm_cache:
                     logging.warning("UTC cap before %s remaining $%.3f", show_id, remaining)
                     break
