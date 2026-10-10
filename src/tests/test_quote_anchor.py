@@ -714,3 +714,116 @@ def test_repeated_cta_is_not_unique_fresh_air_closer_is() -> None:
     assert matched
     assert matched[0].start <= 1218.0
     assert matched[0].end >= 1310.5
+
+
+def test_first_last_snaps_repeated_cta_to_last_in_window() -> None:
+    """Sentence-variant 1263 CTA: last occurrence is Fresh Air ~1311."""
+    words = _stacked_npr_words()
+    ad = QuoteAd(
+        start_quote="This week on Ted Radio Hour",
+        end_quote="listen on the NPR app",
+        content_type="educational/self_promo",
+        confidence=0.95,
+    )
+    first_best = resolve_ads(
+        [ad],
+        words,
+        [
+            SegmentSpan(1217.0, 1263.0, "This week on Ted Radio Hour. Listen on the NPR app."),
+            SegmentSpan(1288.0, 1311.2, "This is Tony Mosley co-host of Fresh Air. Listen on the NPR app."),
+        ],
+        chunk_start=1217.0,
+        chunk_end=1311.2,
+    )
+    assert first_best[0].end <= 1263.5
+    matched = resolve_ads(
+        [ad],
+        words,
+        [
+            SegmentSpan(1217.0, 1263.0, "This week on Ted Radio Hour. Listen on the NPR app."),
+            SegmentSpan(1288.0, 1311.2, "This is Tony Mosley co-host of Fresh Air. Listen on the NPR app."),
+        ],
+        chunk_start=1217.0,
+        chunk_end=1311.2,
+        first_last=True,
+        window_bound=(1217.0, 1311.2),
+    )
+    assert matched[0].start <= 1218.0
+    assert matched[0].end >= 1309.5
+    assert matched[0].end <= 1311.2 + 1e-6
+    assert matched[0].start < matched[0].end
+
+
+def test_first_last_start_is_first_occurrence() -> None:
+    words = _words(
+        ("support", 10.0, 10.2),
+        ("comes", 10.2, 10.4),
+        ("from", 10.4, 10.6),
+        ("acme", 10.6, 11.0),
+        ("show", 20.0, 20.4),
+        ("support", 30.0, 30.2),
+        ("comes", 30.2, 30.4),
+        ("from", 30.4, 30.6),
+        ("acme", 30.6, 31.0),
+        ("visit", 40.0, 40.2),
+        ("acme", 40.2, 40.5),
+        ("com", 40.5, 41.0),
+    )
+    ad = QuoteAd(
+        start_quote="support comes from acme",
+        end_quote="visit acme com",
+        content_type="promotional_external",
+        confidence=0.9,
+    )
+    matched = resolve_ads(
+        [ad],
+        words,
+        [],
+        chunk_start=10.0,
+        chunk_end=41.0,
+        first_last=True,
+        window_bound=(10.0, 41.0),
+    )
+    assert matched[0].start == 10.0
+    assert matched[0].end == 41.0
+
+
+def test_first_last_never_past_window_and_skips_pad_repeat() -> None:
+    """A CTA in padding after the spotted window must not pull the end."""
+    words = _stacked_npr_words() + _words(
+        ("Listen", 1400.0, 1400.2),
+        ("on", 1400.2, 1400.3),
+        ("the", 1400.3, 1400.4),
+        ("NPR", 1400.4, 1400.7),
+        ("app.", 1400.7, 1401.0),
+    )
+    ad = QuoteAd(
+        start_quote="This week on Ted Radio Hour",
+        end_quote="listen on the NPR app",
+        content_type="educational/self_promo",
+        confidence=0.95,
+    )
+    matched = resolve_ads(
+        [ad],
+        words,
+        [],
+        chunk_start=1217.0,
+        chunk_end=1311.2,
+        first_last=True,
+        window_bound=(1217.0, 1311.2),
+    )
+    assert matched[0].start <= 1218.0
+    assert matched[0].end >= 1309.5
+    assert matched[0].end <= 1311.2 + 1e-6
+    from podcast_processor.quote_anchor import expand_outward_to_silence
+
+    snapped = expand_outward_to_silence(
+        matched[0].start,
+        matched[0].end,
+        [(1216.5, 1217.0), (1311.2, 1312.0)],
+        bound_start=matched[0].bound_start or matched[0].start,
+        bound_end=matched[0].bound_end or matched[0].end,
+    )
+    assert snapped[0] >= 1217.0 - 1e-6
+    assert snapped[1] <= 1311.2 + 1e-6
+    assert snapped[0] < snapped[1]

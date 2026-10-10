@@ -184,6 +184,16 @@ class Config(BaseModel):
             "best quote matching. Default off."
         ),
     )
+    enable_quote_first_last_anchors: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_FIRST_LAST_ANCHORS,
+        description=(
+            "When a start quote/anchor occurs more than once in the spotted "
+            "window, snap start to the first hit; when the end quote/anchor "
+            "repeats, snap end to the last hit. Never past window bounds; "
+            "keep start<end and silence snap. Skips uniqueness re-asks. "
+            "Default off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

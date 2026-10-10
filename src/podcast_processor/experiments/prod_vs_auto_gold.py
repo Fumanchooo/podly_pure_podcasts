@@ -148,6 +148,7 @@ def production_config(
     enable_richer_spotter: bool = False,
     enable_quote_fallback_bound: bool = False,
     enable_quote_unique_anchors: bool = False,
+    enable_quote_first_last_anchors: bool = False,
 ) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
@@ -162,6 +163,7 @@ def production_config(
         enable_richer_spotter=enable_richer_spotter,
         enable_quote_fallback_bound=enable_quote_fallback_bound,
         enable_quote_unique_anchors=enable_quote_unique_anchors,
+        enable_quote_first_last_anchors=enable_quote_first_last_anchors,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
@@ -543,6 +545,7 @@ def run_quote_anchor_production_cut(
     tracker: SpendTracker,
     words_cache: Path | None = None,
     llm_cache_dir: Path | None = None,
+    llm_cache_dirs: list[Path] | None = None,
     complete_fn: Any | None = None,
     skip_audio_clip: bool = True,
     silence_gaps: list[tuple[float, float]] | None = None,
@@ -641,6 +644,7 @@ def run_quote_anchor_production_cut(
             complete_fn=complete_fn,
             word_cache_path=words_cache,
             llm_cache_dir=llm_cache_dir,
+            llm_cache_dirs=llm_cache_dirs,
             require_llm_cache=require_llm_cache,
             pull_dai_bed=pull_dai_bed,
             extra_phrases=extra_phrases,

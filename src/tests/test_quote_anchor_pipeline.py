@@ -95,6 +95,7 @@ def test_quote_anchor_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_RICHER_SPOTTER is False
     assert DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND is False
     assert DEFAULTS.ENABLE_QUOTE_UNIQUE_ANCHORS is False
+    assert DEFAULTS.ENABLE_QUOTE_FIRST_LAST_ANCHORS is False
     config = create_standard_test_config()
     assert config.enable_quote_anchor_boundaries is False
     assert config.enable_spot_then_confirm is False
@@ -103,6 +104,7 @@ def test_quote_anchor_flag_defaults_off() -> None:
     assert config.enable_richer_spotter is False
     assert config.enable_quote_fallback_bound is False
     assert config.enable_quote_unique_anchors is False
+    assert config.enable_quote_first_last_anchors is False
     assert quote_anchor_boundaries_enabled(config) is False
     assert spot_then_confirm_enabled(config) is False
     assert quote_anchor_path_enabled(config) is False

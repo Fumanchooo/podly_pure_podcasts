@@ -90,6 +90,28 @@ ABLATIONS = {
         "enable_quote_unique_anchors": True,
         "enable_spot_merge_calls": True,
     },
+    "first_last": {"enable_quote_first_last_anchors": True},
+    "first_last_merge": {
+        "enable_quote_first_last_anchors": True,
+        "enable_spot_merge_calls": True,
+    },
+    "first_last_unique": {
+        "enable_quote_first_last_anchors": True,
+        "enable_quote_unique_anchors": True,
+    },
+    "first_last_unique_merge": {
+        "enable_quote_first_last_anchors": True,
+        "enable_quote_unique_anchors": True,
+        "enable_spot_merge_calls": True,
+    },
+}
+
+# Seed confirm replies from earlier $ Gemini runs. First/last is matcher-only.
+CACHE_FOR_ABLATION = {
+    "first_last": ("spot-confirm",),
+    "first_last_merge": ("spot-v2/merge", "spot-confirm"),
+    "first_last_unique": ("unique-anchor/unique",),
+    "first_last_unique_merge": ("unique-anchor/unique_merge",),
 }
 
 
@@ -101,6 +123,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--leakage", action="store_true")
     parser.add_argument("--holdout", action="store_true")
     parser.add_argument("--require-llm-cache", action="store_true")
+    parser.add_argument(
+        "--cache-from",
+        action="append",
+        default=[],
+        help="Extra llm_cache dirs (absolute or under quote-anchor runs/)",
+    )
     parser.add_argument("--ablation", default="all", choices=sorted(ABLATIONS))
     parser.add_argument("--extra-name", action="append", default=[])
     parser.add_argument("--extra-phrase", action="append", default=[])
@@ -297,6 +325,18 @@ def main() -> int:
         tag = f"{tag}-leak"
     out = RUN / args.out / tag / ("holdout" if holdout else "original10")
     out.mkdir(parents=True, exist_ok=True)
+    split = "holdout" if holdout else "original10"
+    seed_cache_dirs: list[Path] = []
+    for raw in list(args.cache_from) + list(CACHE_FOR_ABLATION.get(args.ablation, ())):
+        path = Path(raw)
+        if not path.is_absolute():
+            candidate = RUN / raw / split / "llm_cache"
+            path = candidate if candidate.is_dir() else (RUN / raw)
+        if path.is_dir():
+            seed_cache_dirs.append(path)
+        else:
+            logging.warning("seed cache missing %s", path)
+    logging.info("seed caches=%s", [str(p) for p in seed_cache_dirs])
 
     labels = load_json(labels_path)
     windows = list(labels.get("windows") or [])
@@ -502,6 +542,7 @@ def main() -> int:
                     tracker=tracker,
                     words_cache=wpath,
                     llm_cache_dir=out / "llm_cache",
+                    llm_cache_dirs=seed_cache_dirs,
                     skip_audio_clip=True,
                     transcripts_dir=transcripts_dir,
                     require_llm_cache=args.require_llm_cache,

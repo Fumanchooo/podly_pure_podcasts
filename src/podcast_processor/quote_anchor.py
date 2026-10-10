@@ -536,6 +536,44 @@ def _match_ordered_quote(
     )
 
 
+def iter_quote_hits(
+    words: list[WordTiming],
+    quote: str,
+    *,
+    search_from: int = 0,
+    search_to: int | None = None,
+    threshold: float = MATCH_THRESHOLD,
+    full_sentence: bool = False,
+    unique_anchors: bool = False,
+    tail: bool = False,
+) -> list[tuple[int, int, float]]:
+    """Non-overlapping hits using the same matcher as match_quotes_in_order."""
+    hits: list[tuple[int, int, float]] = []
+    cursor = search_from
+    guard = 0
+    n = max(1, len(words))
+    while guard < n:
+        guard += 1
+        hit = _match_ordered_quote(
+            words,
+            quote,
+            search_from=cursor,
+            search_to=search_to,
+            threshold=threshold,
+            full_sentence=full_sentence,
+            unique_anchors=unique_anchors,
+            tail=tail,
+        )
+        if hit is None:
+            break
+        hits.append(hit)
+        nxt = hit[1]
+        if nxt <= cursor:
+            nxt = cursor + 1
+        cursor = nxt
+    return hits
+
+
 def match_quotes_in_order(
     words: list[WordTiming],
     ads: list[QuoteAd],
@@ -545,37 +583,75 @@ def match_quotes_in_order(
     threshold: float = MATCH_THRESHOLD,
     full_sentence: bool = False,
     unique_anchors: bool = False,
+    first_last: bool = False,
 ) -> list[tuple[QuoteAd, tuple[int, int, float] | None]]:
     cursor = search_from
     results: list[tuple[QuoteAd, tuple[int, int, float] | None]] = []
     for ad in ads:
-        start_hit = _match_ordered_quote(
-            words,
-            ad.start_quote,
-            search_from=cursor,
-            search_to=search_to,
-            threshold=threshold,
-            full_sentence=full_sentence,
-            unique_anchors=unique_anchors,
-            tail=False,
-        )
+        start_hits: list[tuple[int, int, float]] = []
+        if first_last:
+            start_hits = iter_quote_hits(
+                words,
+                ad.start_quote,
+                search_from=cursor,
+                search_to=search_to,
+                threshold=threshold,
+                full_sentence=full_sentence,
+                unique_anchors=unique_anchors,
+                tail=False,
+            )
+            start_hit = start_hits[0] if start_hits else None
+        else:
+            start_hit = _match_ordered_quote(
+                words,
+                ad.start_quote,
+                search_from=cursor,
+                search_to=search_to,
+                threshold=threshold,
+                full_sentence=full_sentence,
+                unique_anchors=unique_anchors,
+                tail=False,
+            )
         if start_hit is None:
             results.append((ad, None))
             continue
-        if normalize_tokens(ad.end_quote) == normalize_tokens(ad.start_quote):
-            results.append((ad, start_hit))
-            cursor = start_hit[1]
-            continue
-        end_hit = _match_ordered_quote(
-            words,
-            ad.end_quote,
-            search_from=start_hit[1],
-            search_to=search_to,
-            threshold=threshold,
-            full_sentence=full_sentence,
-            unique_anchors=unique_anchors,
-            tail=True,
+        same_quotes = normalize_tokens(ad.end_quote) == normalize_tokens(
+            ad.start_quote
         )
+        if same_quotes:
+            if first_last and start_hits:
+                end_hit = start_hits[-1]
+                span_end = max(end_hit[1], start_hit[1])
+                score = min(start_hit[2], end_hit[2])
+                results.append((ad, (start_hit[0], span_end, score)))
+                cursor = span_end
+            else:
+                results.append((ad, start_hit))
+                cursor = start_hit[1]
+            continue
+        if first_last:
+            end_hits = iter_quote_hits(
+                words,
+                ad.end_quote,
+                search_from=start_hit[1],
+                search_to=search_to,
+                threshold=threshold,
+                full_sentence=full_sentence,
+                unique_anchors=unique_anchors,
+                tail=True,
+            )
+            end_hit = end_hits[-1] if end_hits else None
+        else:
+            end_hit = _match_ordered_quote(
+                words,
+                ad.end_quote,
+                search_from=start_hit[1],
+                search_to=search_to,
+                threshold=threshold,
+                full_sentence=full_sentence,
+                unique_anchors=unique_anchors,
+                tail=True,
+            )
         if end_hit is None:
             # Keep the start hit so resolve_ads can grow the end via adjacent
             # segments (Planet Money 1922 Sources & Methods; end quote often
@@ -585,6 +661,10 @@ def match_quotes_in_order(
             continue
         span_start = start_hit[0]
         span_end = max(end_hit[1], start_hit[1])
+        if span_end <= span_start:
+            results.append((ad, start_hit))
+            cursor = start_hit[1]
+            continue
         score = min(start_hit[2], end_hit[2])
         results.append((ad, (span_start, span_end, score)))
         cursor = span_end
@@ -750,6 +830,24 @@ def _clip_fallback(
     return clipped_start, clipped_end
 
 
+def _clip_span_keep_order(
+    start: float,
+    end: float,
+    bound: tuple[float, float] | None,
+) -> tuple[float, float]:
+    """Clip to bound without inverting start<end. No-op if clip would collapse."""
+    if bound is None:
+        return start, end
+    lo, hi = bound
+    if hi <= lo:
+        return start, end
+    clipped_start = min(max(start, lo), hi)
+    clipped_end = min(max(end, lo), hi)
+    if clipped_end <= clipped_start:
+        return start, end
+    return clipped_start, clipped_end
+
+
 def resolve_ads(
     ads: list[QuoteAd],
     words: list[WordTiming],
@@ -763,17 +861,26 @@ def resolve_ads(
     stop_before: float | None = None,
     full_sentence: bool = False,
     unique_anchors: bool = False,
+    first_last: bool = False,
     fallback_bound: tuple[float, float] | None = None,
+    window_bound: tuple[float, float] | None = None,
 ) -> list[QuoteMatch]:
     """Map each reported ad to a cut. Never drop: chunk span is last resort."""
+    search_from = word_from
+    search_to = word_to
+    if first_last and window_bound is not None:
+        w_lo, w_hi = word_index_range(words, window_bound[0], window_bound[1])
+        search_from = max(word_from, w_lo)
+        search_to = w_hi if word_to is None else min(word_to, w_hi)
     ordered = match_quotes_in_order(
         words,
         ads,
-        search_from=word_from,
-        search_to=word_to,
+        search_from=search_from,
+        search_to=search_to,
         threshold=threshold,
         full_sentence=full_sentence,
         unique_anchors=unique_anchors,
+        first_last=first_last,
     )
     matches: list[QuoteMatch] = []
     prior = stop_before
@@ -789,6 +896,7 @@ def resolve_ads(
             i0, i1, score = hit
             start = words[i0].start
             end = words[i1 - 1].end
+            start, end = _clip_span_keep_order(start, end, window_bound)
             if end > start:
                 if seg_bound is not None:
                     bound_start = min(seg_bound[0], start)
@@ -802,23 +910,35 @@ def resolve_ads(
                             start = bound_start
                 else:
                     bound_start, bound_end = start, end
-                matches.append(
-                    QuoteMatch(
-                        ad=ad,
-                        start=start,
-                        end=end,
-                        method="word",
-                        score=score,
-                        bound_start=bound_start,
-                        bound_end=bound_end,
-                    )
+                start, end = _clip_span_keep_order(start, end, window_bound)
+                bound_start, bound_end = _clip_span_keep_order(
+                    bound_start, bound_end, window_bound
                 )
-                prior = max(prior or end, end)
-                continue
+                if end <= start:
+                    logger.warning(
+                        "first/last window clip collapsed %r-%r",
+                        ad.start_quote,
+                        ad.end_quote,
+                    )
+                else:
+                    matches.append(
+                        QuoteMatch(
+                            ad=ad,
+                            start=start,
+                            end=end,
+                            method="word",
+                            score=score,
+                            bound_start=bound_start,
+                            bound_end=bound_end,
+                        )
+                    )
+                    prior = max(prior or end, end)
+                    continue
             logger.warning("word match collapsed for %r-%r", ad.start_quote, ad.end_quote)
         if seg_bound is not None:
             start, end, score = seg_bound
             start, end = _clip_fallback(start, end, fallback_bound)
+            start, end = _clip_span_keep_order(start, end, window_bound)
             logger.info(
                 "quote match miss; segment-edge fallback %s-%.1f-%.1f",
                 ad.start_quote[:40],
@@ -839,6 +959,7 @@ def resolve_ads(
             prior = max(prior or end, end)
             continue
         fb_start, fb_end = _clip_fallback(chunk_start, chunk_end, fallback_bound)
+        fb_start, fb_end = _clip_span_keep_order(fb_start, fb_end, window_bound)
         logger.warning(
             "quote unmatched; chunk fallback %.1f-%.1f for %r",
             fb_start,

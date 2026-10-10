@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -99,6 +99,10 @@ def quote_unique_anchors_enabled(config: Config) -> bool:
     return bool(getattr(config, "enable_quote_unique_anchors", False))
 
 
+def quote_first_last_anchors_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_first_last_anchors", False))
+
+
 def quote_anchor_path_enabled(config: Config) -> bool:
     return quote_anchor_boundaries_enabled(config) or spot_then_confirm_enabled(
         config
@@ -149,6 +153,7 @@ class QuoteAnchorClassifier:
         complete_fn: CompleteFn | None = None,
         word_cache_path: Path | None = None,
         llm_cache_dir: Path | None = None,
+        llm_cache_dirs: Sequence[Path] | None = None,
         whisper_model: str = "base",
         require_llm_cache: bool = False,
         pull_dai_bed: bool = False,
@@ -163,6 +168,10 @@ class QuoteAnchorClassifier:
         self.complete_fn = complete_fn
         self.word_cache_path = word_cache_path
         self.llm_cache_dir = llm_cache_dir
+        extras = [Path(p) for p in (llm_cache_dirs or [])]
+        if llm_cache_dir is not None and llm_cache_dir not in extras:
+            extras.insert(0, Path(llm_cache_dir))
+        self.llm_cache_dirs = extras
         self.whisper_model = whisper_model
         self.require_llm_cache = require_llm_cache
         self.pull_dai_bed = pull_dai_bed
@@ -175,6 +184,7 @@ class QuoteAnchorClassifier:
         self.richer_spotter = richer_spotter_enabled(config)
         self.fallback_bound = quote_fallback_bound_enabled(config)
         self.unique_anchors = quote_unique_anchors_enabled(config)
+        self.first_last = quote_first_last_anchors_enabled(config)
         if self.unique_anchors:
             self.prompt_version = "v4"
         elif self.full_sentence:
@@ -271,8 +281,10 @@ class QuoteAnchorClassifier:
                 stop_before=prior_end,
                 full_sentence=self.full_sentence,
                 unique_anchors=self.unique_anchors and unique_ok,
+                first_last=self.first_last,
+                window_bound=(chunk_start, chunk_end) if self.first_last else None,
             )
-            if self.full_sentence or self.unique_anchors:
+            if self.full_sentence or self.unique_anchors or self.first_last:
                 chunk_matches = union_adjacent_matches(chunk_matches)
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
@@ -280,7 +292,7 @@ class QuoteAnchorClassifier:
                 self._write_identifications(chunk, chunk_matches, model_call)
             matches.extend(chunk_matches)
             idx += len(chunk)
-        if self.full_sentence or self.unique_anchors:
+        if self.full_sentence or self.unique_anchors or self.first_last:
             matches = union_adjacent_matches(matches)
 
         cuts = lexical_cuts_from_matches(
@@ -365,7 +377,7 @@ class QuoteAnchorClassifier:
             if any(item.dropped for item in chunk_matches):
                 raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
             matches.extend(chunk_matches)
-        if self.full_sentence or self.unique_anchors:
+        if self.full_sentence or self.unique_anchors or self.first_last:
             matches = union_adjacent_matches(matches)
 
         cuts = lexical_cuts_from_matches(
@@ -450,6 +462,9 @@ class QuoteAnchorClassifier:
             if self.fallback_bound:
                 bound = fallback_window(cand, ep_end)
                 fallback_start, fallback_end = bound
+            window_bound: tuple[float, float] | None = None
+            if self.first_last:
+                window_bound = (fallback_start, fallback_end)
             matches = resolve_ads(
                 ads,
                 loaded,
@@ -461,9 +476,11 @@ class QuoteAnchorClassifier:
                 stop_before=prior_end,
                 full_sentence=self.full_sentence,
                 unique_anchors=self.unique_anchors and unique_ok,
+                first_last=self.first_last,
                 fallback_bound=bound,
+                window_bound=window_bound,
             )
-            if self.full_sentence or self.unique_anchors:
+            if self.full_sentence or self.unique_anchors or self.first_last:
                 matches = union_adjacent_matches(matches)
             if model_call is not None:
                 self._write_identifications(chunk, matches, model_call)
@@ -492,7 +509,7 @@ class QuoteAnchorClassifier:
                 break
             extends += 1
         result = last_good or matches
-        if self.full_sentence or self.unique_anchors:
+        if self.full_sentence or self.unique_anchors or self.first_last:
             result = union_adjacent_matches(result)
         return result, extends
 
@@ -510,7 +527,7 @@ class QuoteAnchorClassifier:
         excerpt_words: list[WordTiming],
     ) -> tuple[list[QuoteAd], bool]:
         ads = self._keep(parse_quote_ads(raw))
-        if not self.unique_anchors or not ads:
+        if self.first_last or not self.unique_anchors or not ads:
             return ads, True
         issues = uniqueness_issues(excerpt_words, ads)
         if not issues:
@@ -690,16 +707,24 @@ class QuoteAnchorClassifier:
         return hashlib.sha1(f"{system_prompt}\n---\n{user}".encode()).hexdigest()
 
     def _read_llm_cache(self, system_prompt: str, user: str) -> dict[str, Any] | None:
-        if self.llm_cache_dir is None:
-            return None
-        path = self.llm_cache_dir / f"{self._cache_key(system_prompt, user)}.json"
-        if not path.is_file():
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-        return payload if isinstance(payload, dict) else None
+        key = f"{self._cache_key(system_prompt, user)}.json"
+        dirs: list[Path] = []
+        for path in self.llm_cache_dirs:
+            if path not in dirs:
+                dirs.append(path)
+        if self.llm_cache_dir is not None and self.llm_cache_dir not in dirs:
+            dirs.insert(0, self.llm_cache_dir)
+        for cache_dir in dirs:
+            path = cache_dir / key
+            if not path.is_file():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return None
 
     def _write_llm_cache(
         self,

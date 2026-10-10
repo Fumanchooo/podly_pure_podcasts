@@ -215,6 +215,7 @@ def test_spot_v2_flags_default_off() -> None:
     assert DEFAULTS.ENABLE_RICHER_SPOTTER is False
     assert DEFAULTS.ENABLE_QUOTE_FALLBACK_BOUND is False
     assert DEFAULTS.ENABLE_QUOTE_UNIQUE_ANCHORS is False
+    assert DEFAULTS.ENABLE_QUOTE_FIRST_LAST_ANCHORS is False
 
 
 def test_merge_calls_one_llm_for_nearby_spots(app: Flask) -> None:
@@ -450,3 +451,59 @@ def test_unique_anchor_fallback_after_failed_reask(app: Flask) -> None:
         )
         assert classifier.last_reasks >= 1
         assert classifier.last_unique_fallbacks >= 1
+
+
+def test_first_last_skips_unique_reask_and_uses_last_cta(app: Flask) -> None:
+    force_local_writer()
+    with app.app_context():
+        rows = [
+            (0.0, 6.0, "This week on Ted Radio Hour listen on the NPR app."),
+            (8.0, 16.0, "This is Tony Mosley co-host of Fresh Air."),
+            (17.0, 24.0, "Listen on the NPR app or wherever you get Fresh Air."),
+            (80.0, 90.0, "The hosts continue the interview with more details."),
+        ]
+        post, segments = _seed("Planet Money", rows)
+        calls: list[str] = []
+
+        def complete(_system: str, user: str) -> str:
+            calls.append(user)
+            return json.dumps(
+                {
+                    "ads": [
+                        {
+                            "start_anchor": "This week on Ted Radio Hour",
+                            "end_anchor": "listen on the NPR app",
+                            "content_type": "educational/self_promo",
+                            "confidence": 0.95,
+                        }
+                    ]
+                }
+            )
+
+        config = create_standard_test_config().model_copy(
+            update={
+                "enable_spot_then_confirm": True,
+                "enable_quote_anchor_boundaries": True,
+                "enable_quote_unique_anchors": True,
+                "enable_quote_first_last_anchors": True,
+                "whisper": WhisperTestConfig(),
+            }
+        )
+        classifier = QuoteAnchorClassifier(
+            config=config,
+            db_session=db.session,
+            complete_fn=complete,
+            spot_pad_s=4.0,
+        )
+        cuts = classifier.classify(
+            transcript_segments=segments,
+            post=post,
+            words=_words_from_rows(rows),
+        )
+        assert classifier.last_reasks == 0
+        assert classifier.last_unique_fallbacks == 0
+        assert not any("PREVIOUS ANCHORS REJECTED" in user for user in calls)
+        assert cuts
+        assert cuts[0][0] <= 1.0
+        assert cuts[0][1] >= 17.0
+        assert cuts[0][1] < 80.0

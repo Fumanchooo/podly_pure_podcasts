@@ -39,6 +39,9 @@ ENABLE_RICHER_SPOTTER = False
 ENABLE_QUOTE_FALLBACK_BOUND = False
 # Unique start/end anchors in the per-break LLM call. Default off.
 ENABLE_QUOTE_UNIQUE_ANCHORS = False
+# Repeated start quote → first hit; repeated end quote → last hit,
+# inside the spotted/merged window. Drops uniqueness re-asks. Default off.
+ENABLE_QUOTE_FIRST_LAST_ANCHORS = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"
