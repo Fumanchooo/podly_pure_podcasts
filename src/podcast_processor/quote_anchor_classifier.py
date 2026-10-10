@@ -302,19 +302,21 @@ class QuoteAnchorClassifier:
         started: float,
     ) -> list[tuple[float, float]]:
         extra_hits = []
+        corroborating: list = []
         ngrams = self.ngram_phrases
         if self.richer_spotter:
             intra = intra_episode_ngrams(loaded)
             ngrams = tuple(dict.fromkeys((*ngrams, *intra)))
             loud, speak = audio_spot_hits(post.unprocessed_audio_path)
-            extra_hits.extend(loud)
-            extra_hits.extend(speak)
+            corroborating.extend(loud)
+            corroborating.extend(speak)
         candidates, stats = spot_candidates(
             loaded,
             extra_phrases=self.extra_phrases,
             extra_names=self.extra_names,
             ngram_phrases=ngrams,
             extra_hits=extra_hits or None,
+            corroborating_hits=corroborating or None,
             drop_weak=self.merge_calls,
             merge_calls=self.merge_calls,
         )

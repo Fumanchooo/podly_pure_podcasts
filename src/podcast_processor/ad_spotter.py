@@ -483,6 +483,43 @@ def drop_weak_candidates(
     return [cand for cand in candidates if not is_weak_candidate(cand)]
 
 
+def corroborate_candidates(
+    candidates: list[CandidateBreak],
+    extra_hits: list[SpotHit],
+    *,
+    near_s: float = 8.0,
+) -> list[CandidateBreak]:
+    """Attach loudness/speaker hits to nearby lexical candidates.
+
+    Earlier inspection: silence/preroll/loudness alone are imprecise.
+    Do not create new candidates from those signals.
+    """
+    if not extra_hits or not candidates:
+        return candidates
+    out: list[CandidateBreak] = []
+    for cand in candidates:
+        nearby = [
+            hit
+            for hit in extra_hits
+            if hit.start <= cand.end + near_s and hit.end >= cand.start - near_s
+        ]
+        if not nearby:
+            out.append(cand)
+            continue
+        hits = tuple((*cand.hits, *nearby))
+        kinds = tuple(sorted({h.kind for h in hits}))
+        out.append(
+            CandidateBreak(
+                start=min(h.start for h in hits),
+                end=max(h.end for h in hits),
+                hits=hits,
+                kinds=kinds,
+                weight=sum(h.weight for h in hits),
+            )
+        )
+    return out
+
+
 def merge_candidates_for_calls(
     candidates: list[CandidateBreak],
     *,
@@ -600,6 +637,7 @@ def spot_candidates(
     exclude_names: tuple[str, ...] = (),
     ngram_phrases: tuple[str, ...] = (),
     extra_hits: list[SpotHit] | None = None,
+    corroborating_hits: list[SpotHit] | None = None,
     gap_s: float = CLUSTER_GAP_S,
     max_span_s: float = MAX_CLUSTER_S,
     max_candidates: int = MAX_CANDIDATES,
@@ -621,6 +659,8 @@ def spot_candidates(
     candidates = cluster_hits(
         hits, gap_s=gap_s, max_span_s=max_span_s, max_candidates=max_candidates
     )
+    if corroborating_hits:
+        candidates = corroborate_candidates(candidates, corroborating_hits)
     if drop_weak:
         candidates = drop_weak_candidates(candidates)
     if merge_calls:

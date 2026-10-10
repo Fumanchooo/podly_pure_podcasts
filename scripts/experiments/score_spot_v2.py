@@ -335,6 +335,7 @@ def main() -> int:
     spotter_rows: dict[str, dict] = {}
     for sid in scored:
         extra_hits = []
+        corroborating = []
         ngram_phrases = ngrams
         if richer:
             intra = intra_episode_ngrams(words_by_show[sid])
@@ -346,8 +347,8 @@ def main() -> int:
                     ap = REPO / ap
                 if ap.is_file():
                     loud, speak = audio_spot_hits(ap)
-                    extra_hits.extend(loud)
-                    extra_hits.extend(speak)
+                    corroborating.extend(loud)
+                    corroborating.extend(speak)
         cands, stats = spot_candidates(
             words_by_show[sid],
             extra_phrases=extra_phrases,
@@ -355,6 +356,7 @@ def main() -> int:
             exclude_names=exclude,
             ngram_phrases=ngram_phrases,
             extra_hits=extra_hits or None,
+            corroborating_hits=corroborating or None,
             drop_weak=drop_weak,
             merge_calls=merge_calls,
         )
@@ -380,7 +382,7 @@ def main() -> int:
     n_miss = len(missed_all)
     recall = 1.0 if n_gold == 0 else (n_gold - n_miss) / float(n_gold)
     signals = {}
-    if args.signals or args.spotter_only:
+    if args.signals:
         signals = score_signals(scored, words_by_show, gold, downloads, ngrams)
     tuned = [n.item for n in TUNE_NOTES if n.tuned_on_original10]
     spotter_summary = {

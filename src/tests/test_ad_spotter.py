@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from podcast_processor.ad_spotter import (
+    CandidateBreak,
+    SpotHit,
+    corroborate_candidates,
     drop_weak_candidates,
     gold_misses,
     intra_episode_ngrams,
@@ -168,3 +171,24 @@ def test_exclude_names_drops_leaked_sponsors() -> None:
     assert not any(h.kind == "sponsor" and "netsuite" in h.cue for h in hits)
     mentioned = names_in_text("visit netsuite.com slash darknet")
     assert any("netsuite" in n.lower() for n in mentioned)
+
+
+def test_loudness_corroborates_but_does_not_spawn_candidates() -> None:
+    lexical = [
+        CandidateBreak(
+            start=10.0,
+            end=12.0,
+            hits=(SpotHit(10.0, 12.0, "sponsor", "microsoft", 1.6),),
+            kinds=("sponsor",),
+            weight=1.6,
+        )
+    ]
+    audio = [
+        SpotHit(10.5, 14.0, "loudness", "rms_step", 1.15),
+        SpotHit(400.0, 410.0, "speaker", "voice_change", 1.25),
+    ]
+    out = corroborate_candidates(lexical, audio, near_s=8.0)
+    assert len(out) == 1
+    assert "loudness" in out[0].kinds
+    assert "speaker" not in out[0].kinds
+    assert not is_weak_candidate(out[0])
