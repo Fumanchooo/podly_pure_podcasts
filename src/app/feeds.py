@@ -14,6 +14,7 @@ import PyRSS2Gen
 from flask import current_app, g, request
 
 from app.extensions import db
+from app.guid_urls import post_stream_path
 from app.models import Feed, Post, User, UserFeed
 from app.runtime_config import config
 from app.writer.client import writer_client
@@ -379,6 +380,29 @@ def _should_whitelist_new_post(
     return _should_auto_whitelist_new_posts(feed, post)
 
 
+def _find_existing_post_for_entry(
+    entry: feedparser.FeedParserDict,
+    existing_posts: dict[str, Post],
+    existing_posts_by_url: dict[str, Post],
+) -> tuple[Post | None, str | None]:
+    """Match a feed entry to a stored post by GUID, then by audio URL.
+
+    The URL fallback heals rows whose guid was synthesized from the enclosure
+    URL by the legacy ``get_guid`` hash. Returns ``(post, repaired_guid)``.
+    """
+    entry_guid = get_guid(entry)
+    existing_post = existing_posts.get(entry_guid)
+    if existing_post is not None:
+        return existing_post, None
+    audio_url = find_audio_link(entry)
+    if not audio_url:
+        return None, None
+    existing_post = existing_posts_by_url.get(audio_url)
+    if existing_post is not None and existing_post.guid != entry_guid:
+        return existing_post, entry_guid
+    return existing_post, None
+
+
 def refresh_feed(feed: Feed) -> None:
     logger.info(f"Refreshing feed with ID: {feed.id}")
     feed_data = fetch_feed(feed.rss_url)
@@ -391,6 +415,11 @@ def refresh_feed(feed: Feed) -> None:
             updates["image_url"] = new_image_url
 
     existing_posts = {post.guid: post for post in feed.posts}  # type: ignore[attr-defined]
+    existing_posts_by_url = {
+        post.download_url: post
+        for post in feed.posts  # type: ignore[attr-defined]
+        if post.download_url
+    }
     oldest_post = min(
         (post for post in feed.posts if post.release_date),  # type: ignore[attr-defined]
         key=lambda p: p.release_date,
@@ -421,7 +450,9 @@ def refresh_feed(feed: Feed) -> None:
     new_posts = []
     existing_post_updates = []
     for entry in feed_data.entries:
-        existing_post = existing_posts.get(entry.id)
+        existing_post, repaired_guid = _find_existing_post_for_entry(
+            entry, existing_posts, existing_posts_by_url
+        )
         if existing_post is None:
             logger.debug("found new podcast: %s", entry.title)
             p = make_post(feed, entry)
@@ -442,6 +473,9 @@ def refresh_feed(feed: Feed) -> None:
             continue
 
         post_update: dict[str, Any] = {"post_id": existing_post.id}
+
+        if repaired_guid is not None:
+            post_update["guid"] = repaired_guid
 
         updated_title = str(getattr(entry, "title", "") or "").strip()
         if updated_title and existing_post.title != updated_title:
@@ -657,8 +691,10 @@ def feed_item(post: Post, prepend_feed_title: bool = False) -> PyRSS2Gen.RSSItem
     base_url = _get_base_url()
 
     # Podcast clients stream enclosure URLs directly, so use the inline MP3 route
-    # rather than the attachment-style download endpoint.
-    audio_url = _append_feed_token_params(f"{base_url}/post/{post.guid}.mp3")
+    # rather than the attachment-style download endpoint. Upstream GUIDs may
+    # contain reserved characters (e.g. audioboom `tag:...:/posts/N`), so the
+    # GUID must be a single percent-encoded path segment.
+    audio_url = _append_feed_token_params(f"{base_url}{post_stream_path(post.guid)}")
     description = build_post_feed_description_html(post)
 
     title = post.title
@@ -998,14 +1034,21 @@ def _format_pub_date(release_date: datetime.datetime | None) -> str | None:
     return format_datetime(normalized.astimezone(datetime.UTC))
 
 
-# sometimes feed entry ids are the post url or something else
 def get_guid(entry: feedparser.FeedParserDict) -> str:
-    try:
-        uuid.UUID(entry.id)
-        return str(entry.id)
-    except ValueError:
-        dlurl = find_audio_link(entry)
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, dlurl))
+    """Return the post GUID, preferring the upstream `<guid>` verbatim.
+
+    Real feeds rarely use UUIDs as their `<guid>`; URLs and `tag:` URIs are
+    common. Hashing the enclosure URL as a substitute breaks subscriber
+    libraries whenever the CDN path or tracking params change, so we only
+    fall back to URL hashing when the upstream provides no usable id.
+    """
+    raw = getattr(entry, "id", None) or getattr(entry, "guid", None)
+    if isinstance(raw, str):
+        candidate = raw.strip()
+        if candidate:
+            return candidate
+    dlurl = find_audio_link(entry)
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, dlurl))
 
 
 def get_duration(entry: feedparser.FeedParserDict | dict[str, Any]) -> int | None:
