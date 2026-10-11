@@ -1,3 +1,11 @@
+## [2.7.1](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.0...v2.7.1) (2026-10-11)
+
+
+### Performance Improvements
+
+* **feed:** short-circuit unchanged feeds with ETag/Last-Modified 304s ([19982b1](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/19982b19c5c975bb672c2c1e464ac762fbdd0201)), closes [#240](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/240)
+* **feed:** short-circuit unchanged feeds with ETag/Last-Modified 304s ([#217](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/217)) ([318ec4c](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/318ec4cf5f0b81c0b595b3d528b54e450f2ccd76))
+
 # [2.7.0](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.6.1...v2.7.0) (2026-10-11)
 
 
