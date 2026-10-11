@@ -145,6 +145,40 @@ class Config(BaseModel):
             "break with padded context. Default off. Scout confirm stays off."
         ),
     )
+    enable_quote_resume_trim: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_RESUME_TRIM,
+        description=(
+            "Trim quote ends before show-resume sentences (okay let's do the "
+            "show / okay this is the epic…). Default off."
+        ),
+    )
+    enable_quote_backfill_leadin: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN,
+        description=(
+            "Grow quote starts backward ≤4s to a pause or sentence start. "
+            "Default off."
+        ),
+    )
+    enable_quote_closer_tail: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL,
+        description=(
+            "After a CTA URL, include a short This-is-NPR/Planet-Money credit. "
+            "Default off."
+        ),
+    )
+    enable_spot_weak_drop: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_WEAK_DROP,
+        description=(
+            "Drop spotter candidates whose only hits are company names. "
+            "Default off."
+        ),
+    )
+    enable_snap_earlier_start: bool = Field(
+        default=DEFAULTS.ENABLE_SNAP_EARLIER_START,
+        description=(
+            "Silence-snap cut starts only earlier, never later. Default off."
+        ),
+    )
     developer_mode: bool = Field(
         default=False,
         description="Enable developer mode features like test feeds",

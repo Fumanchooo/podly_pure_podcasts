@@ -54,6 +54,14 @@ def test_snap_start_to_nearest_silence_end() -> None:
     # Inward start may only move later.
     assert snap_time_to_silence(8.7, gaps, radius=2.5, kind="start", prefer="inward") == 8.7
     assert snap_time_to_silence(8.0, gaps, radius=2.5, kind="start", prefer="inward") == 8.4
+    later = [SilenceGap(start=8.8, end=9.0)]
+    assert snap_time_to_silence(8.7, later, radius=2.5, kind="start") == 9.0
+    assert (
+        snap_time_to_silence(
+            8.7, later, radius=2.5, kind="start", prefer="earlier_start"
+        )
+        == 8.7
+    )
 
 
 def test_snap_end_to_nearest_silence_start() -> None:

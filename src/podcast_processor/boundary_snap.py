@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+SnapPrefer = Literal["nearest", "inward", "earlier_start"]
+
 logger = logging.getLogger(__name__)
 
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
@@ -110,7 +112,7 @@ def snap_time_to_silence(
     radius: float,
     *,
     kind: Literal["start", "end"],
-    prefer: Literal["nearest", "inward"] = "nearest",
+    prefer: SnapPrefer = "nearest",
 ) -> float:
     """Snap a cut start to the nearest silence_end, or an end to silence_start."""
     candidates: list[float] = []
@@ -122,6 +124,9 @@ def snap_time_to_silence(
             if kind == "start" and snap < t:
                 continue
             if kind == "end" and snap > t:
+                continue
+        elif prefer == "earlier_start":
+            if kind == "start" and snap > t:
                 continue
         candidates.append(snap)
     if not candidates:
@@ -135,7 +140,7 @@ def snap_cuts_to_silence(
     *,
     radius: float = DEFAULT_RADIUS_SECONDS,
     min_length: float = DEFAULT_MIN_CUT_SECONDS,
-    prefer: Literal["nearest", "inward"] = "nearest",
+    prefer: SnapPrefer = "nearest",
 ) -> list[tuple[float, float]]:
     refined: list[tuple[float, float]] = []
     for start, end in cuts:
@@ -245,7 +250,7 @@ def refine_cuts(
     segments: list[tuple[float, float, str]] | None = None,
     radius: float = DEFAULT_RADIUS_SECONDS,
     min_length: float = DEFAULT_MIN_CUT_SECONDS,
-    prefer: Literal["nearest", "inward"] = "nearest",
+    prefer: SnapPrefer = "nearest",
     gaps: list[SilenceGap] | None = None,
 ) -> list[tuple[float, float]]:
     """Eval/production hook: word extents, then silence snap if audio exists."""

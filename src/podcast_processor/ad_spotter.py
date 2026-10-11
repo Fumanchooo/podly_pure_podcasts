@@ -23,6 +23,7 @@ from podcast_processor.sponsor_lexicon import (
 CLUSTER_GAP_S = 40.0
 MAX_CLUSTER_S = 150.0
 MAX_CANDIDATES = 20
+STRONG_KINDS = frozenset({"cue", "url", "promo", "ngram"})
 NGRAM_N = 6
 NGRAM_MIN_EPISODES = 2
 URL_RE = re.compile(
@@ -389,6 +390,20 @@ def ngram_hits(
     return hits
 
 
+def is_weak_candidate(cand: CandidateBreak) -> bool:
+    """Lone company name with no cue/url/ngram corroboration."""
+    kinds = set(cand.kinds)
+    if kinds & STRONG_KINDS:
+        return False
+    return kinds <= {"sponsor"}
+
+
+def drop_weak_candidates(
+    candidates: list[CandidateBreak],
+) -> list[CandidateBreak]:
+    return [cand for cand in candidates if not is_weak_candidate(cand)]
+
+
 def spot_candidates(
     words: list[WordTiming],
     *,
@@ -398,6 +413,7 @@ def spot_candidates(
     gap_s: float = CLUSTER_GAP_S,
     max_span_s: float = MAX_CLUSTER_S,
     max_candidates: int = MAX_CANDIDATES,
+    drop_weak: bool = False,
 ) -> tuple[list[CandidateBreak], SpotterStats]:
     hits = spot_hits(
         words, extra_phrases=extra_phrases, extra_names=extra_names
@@ -408,6 +424,8 @@ def spot_candidates(
     candidates = cluster_hits(
         hits, gap_s=gap_s, max_span_s=max_span_s, max_candidates=max_candidates
     )
+    if drop_weak:
+        candidates = drop_weak_candidates(candidates)
     stats = SpotterStats(
         n_hits=len(hits),
         n_candidates=len(candidates),

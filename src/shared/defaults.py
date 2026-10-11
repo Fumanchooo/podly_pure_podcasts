@@ -27,6 +27,12 @@ ENABLE_QUOTE_ANCHOR_BOUNDARIES = False
 # Spot-then-confirm: $0 lexicon spotter + one LLM call per candidate
 # (padded region), not a full-episode chunk walk. Default off.
 ENABLE_SPOT_THEN_CONFIRM = False
+# 2026-10-10 algo-theories (all default off; live must unset).
+ENABLE_QUOTE_RESUME_TRIM = False
+ENABLE_QUOTE_BACKFILL_LEADIN = False
+ENABLE_QUOTE_CLOSER_TAIL = False
+ENABLE_SPOT_WEAK_DROP = False
+ENABLE_SNAP_EARLIER_START = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"

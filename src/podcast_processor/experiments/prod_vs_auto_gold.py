@@ -143,6 +143,11 @@ def production_config(
     *,
     enable_quote_anchor_boundaries: bool = False,
     enable_spot_then_confirm: bool = False,
+    enable_quote_resume_trim: bool = False,
+    enable_quote_backfill_leadin: bool = False,
+    enable_quote_closer_tail: bool = False,
+    enable_spot_weak_drop: bool = False,
+    enable_snap_earlier_start: bool = False,
 ) -> Config:
     llm_key = os.environ.get("LLM_API_KEY") or gemini_api_key()
     whisper_model = os.environ.get("WHISPER_LOCAL_MODEL") or "base"
@@ -152,6 +157,11 @@ def production_config(
         enable_bow_scout_gemini_confirm=False,
         enable_quote_anchor_boundaries=enable_quote_anchor_boundaries,
         enable_spot_then_confirm=enable_spot_then_confirm,
+        enable_quote_resume_trim=enable_quote_resume_trim,
+        enable_quote_backfill_leadin=enable_quote_backfill_leadin,
+        enable_quote_closer_tail=enable_quote_closer_tail,
+        enable_spot_weak_drop=enable_spot_weak_drop,
+        enable_snap_earlier_start=enable_snap_earlier_start,
         enable_boundary_refinement=DEFAULTS.ENABLE_BOUNDARY_REFINEMENT,
         enable_dsp_boundary_snap=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
         whisper=LocalWhisperConfig(model=whisper_model, whisper_type="local"),
@@ -533,6 +543,7 @@ def run_quote_anchor_production_cut(
     tracker: SpendTracker,
     words_cache: Path | None = None,
     llm_cache_dir: Path | None = None,
+    llm_cache_dirs: list[Path] | None = None,
     complete_fn: Any | None = None,
     skip_audio_clip: bool = True,
     silence_gaps: list[tuple[float, float]] | None = None,
@@ -631,6 +642,7 @@ def run_quote_anchor_production_cut(
             complete_fn=complete_fn,
             word_cache_path=words_cache,
             llm_cache_dir=llm_cache_dir,
+            llm_cache_dirs=llm_cache_dirs,
             require_llm_cache=require_llm_cache,
             pull_dai_bed=pull_dai_bed,
             extra_phrases=extra_phrases,
@@ -656,10 +668,16 @@ def run_quote_anchor_production_cut(
             from podcast_processor.boundary_snap import SilenceGap, refine_cuts
 
             typed_gaps = [SilenceGap(start=a, end=b) for a, b in silence_gaps]
+            snap_prefer = (
+                "earlier_start"
+                if getattr(config, "enable_snap_earlier_start", False)
+                else "nearest"
+            )
             snapped = refine_cuts(
                 [(a / 1000.0, b / 1000.0) for a, b in merged_ms],
                 gaps=typed_gaps,
                 radius=2.0,
+                prefer=snap_prefer,
             )
             merged_ms = [(int(a * 1000), int(b * 1000)) for a, b in snapped]
         else:

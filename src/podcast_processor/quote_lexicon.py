@@ -49,6 +49,24 @@ SHOW_IDENT_RE = re.compile(
     re.I,
 )
 
+# End-trim only. Do NOT include "this is Planet Money" / "this is NPR" —
+# those are membership closers gold counts as ads (ENABLE_QUOTE_CLOSER_TAIL).
+RESUME_END_RE = re.compile(
+    r"^(okay|alright|all right|anyway)[,.]?\s+"
+    r"(let'?s do (the )?show|let'?s get (back )?to|this is the)\b",
+    re.I,
+)
+
+NETWORK_CREDIT_RE = re.compile(
+    r"^this is (npr|planet money|the indicator)\b",
+    re.I,
+)
+
+BACKFILL_MAX_S = 4.0
+BACKFILL_PAUSE_S = 0.8
+CLOSER_TAIL_MAX_S = 4.0
+CLOSER_TAIL_PAUSE_S = 0.8
+
 CTA_RE = re.compile(
     r"(\.com|\.org|slash |promo code|\bcode \w+|donate\.|"
     r"back to the show|and we.re back|thank you\.?$)",
@@ -140,6 +158,29 @@ def _pauses_in(
     return out
 
 
+def is_show_resume(text: str) -> bool:
+    """Host handoff into the episode, not a network credit closer."""
+    blob = (text or "").strip()
+    if not blob:
+        return False
+    if RESUME_END_RE.search(blob):
+        return True
+    return bool(
+        re.search(
+            r"^(okay[,.]? let'?s do the show|let'?s do this)\.?$",
+            blob,
+            re.I,
+        )
+    )
+
+
+def is_network_credit(text: str) -> bool:
+    blob = (text or "").strip()
+    if not blob or is_show_resume(blob):
+        return False
+    return bool(NETWORK_CREDIT_RE.search(blob))
+
+
 def _find_span(words: list[WordTiming], lo: int, hi: int, pattern: re.Pattern[str]) -> int | None:
     for i in range(lo, hi):
         window = _join(words, i, min(hi, i + 8))
@@ -158,6 +199,9 @@ def refine_quote_span(
     min_hole_s: float = MIN_LONG_HOLE_S,
     max_hole_s: float = MAX_HOLE_PULL_S,
     pull_dai_bed: bool = False,
+    resume_trim: bool = False,
+    backfill_leadin: bool = False,
+    closer_tail: bool = False,
 ) -> tuple[float, float]:
     """Trim show lead-in; pull start across a pre-quote hole; eat wordless CTA tails."""
     if not words or end <= start:
@@ -243,6 +287,49 @@ def refine_quote_span(
                 # at silence start so we do not eat the show resume.
                 end_t = g1 if next_gap < SHORT_END_HOLE_S else g0
 
+    if backfill_leadin and new_lo > 0:
+        limit_t = start_t - BACKFILL_MAX_S
+        i = new_lo
+        while i > 0 and words[i - 1].start >= limit_t - 1e-9:
+            prev_lo = _sentence_start(words, i - 1)
+            prev_text = _join(words, prev_lo, i)
+            if is_show_resume(prev_text):
+                break
+            gap = words[i].start - words[i - 1].end
+            if gap >= BACKFILL_PAUSE_S:
+                start_t = words[i].start
+                new_lo = i
+                break
+            i -= 1
+        else:
+            sent = _sentence_start(words, new_lo)
+            if (
+                sent < new_lo
+                and words[new_lo].start - words[sent].start <= BACKFILL_MAX_S + 1e-9
+                and not is_show_resume(_join(words, sent, new_lo))
+            ):
+                start_t = words[sent].start
+                new_lo = sent
+
+    if resume_trim and new_hi > new_lo:
+        last_lo = _sentence_start(words, new_hi - 1)
+        last_text = _join(words, last_lo, new_hi)
+        if is_show_resume(last_text) and last_lo > new_lo:
+            new_hi = last_lo
+            end_t = words[new_hi - 1].end if new_hi > new_lo else start_t
+
+    if closer_tail and cta_tail and new_hi < len(words) and new_hi > new_lo:
+        gap = words[new_hi].start - words[new_hi - 1].end
+        next_hi = _sentence_end(words, new_hi)
+        next_text = _join(words, new_hi, next_hi)
+        if (
+            gap < CLOSER_TAIL_PAUSE_S
+            and is_network_credit(next_text)
+            and words[next_hi - 1].end <= end_t + CLOSER_TAIL_MAX_S + 1e-9
+        ):
+            new_hi = next_hi
+            end_t = words[new_hi - 1].end
+
     if end_t <= start_t:
         return start, end
     return start_t, end_t
@@ -292,13 +379,23 @@ def lexical_cuts_from_matches(
     *,
     asymmetric_end: bool = False,
     pull_dai_bed: bool = False,
+    resume_trim: bool = False,
+    backfill_leadin: bool = False,
+    closer_tail: bool = False,
 ) -> list[tuple[float, float]]:
     cuts: list[tuple[float, float]] = []
     for item in matches:
         if item.end <= item.start:
             continue
         start, end = refine_quote_span(
-            words, item.start, item.end, gaps=gaps, pull_dai_bed=pull_dai_bed
+            words,
+            item.start,
+            item.end,
+            gaps=gaps,
+            pull_dai_bed=pull_dai_bed,
+            resume_trim=resume_trim,
+            backfill_leadin=backfill_leadin,
+            closer_tail=closer_tail,
         )
         if asymmetric_end and item.bound_end is not None and item.bound_end > end:
             end = float(item.bound_end)

@@ -90,6 +90,11 @@ def _seed_post(title: str = "Darknet") -> tuple[Post, list[TranscriptSegment]]:
 def test_quote_anchor_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES is False
     assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
+    assert DEFAULTS.ENABLE_QUOTE_RESUME_TRIM is False
+    assert DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN is False
+    assert DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL is False
+    assert DEFAULTS.ENABLE_SPOT_WEAK_DROP is False
+    assert DEFAULTS.ENABLE_SNAP_EARLIER_START is False
     config = create_standard_test_config()
     assert config.enable_quote_anchor_boundaries is False
     assert config.enable_spot_then_confirm is False

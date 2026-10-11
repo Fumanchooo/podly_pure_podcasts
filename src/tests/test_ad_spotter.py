@@ -24,6 +24,7 @@ def _words(text: str, t0: float = 0.0, dt: float = 0.2) -> list[WordTiming]:
 
 def test_spot_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
+    assert DEFAULTS.ENABLE_SPOT_WEAK_DROP is False
 
 
 def test_spots_donate_and_support_membership() -> None:

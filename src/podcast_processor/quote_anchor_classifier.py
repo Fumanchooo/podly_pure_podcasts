@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,26 @@ def spot_then_confirm_enabled(config: Config) -> bool:
     return bool(getattr(config, "enable_spot_then_confirm", False))
 
 
+def quote_resume_trim_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_resume_trim", False))
+
+
+def quote_backfill_leadin_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_backfill_leadin", False))
+
+
+def quote_closer_tail_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_quote_closer_tail", False))
+
+
+def spot_weak_drop_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_spot_weak_drop", False))
+
+
+def snap_earlier_start_enabled(config: Config) -> bool:
+    return bool(getattr(config, "enable_snap_earlier_start", False))
+
+
 def quote_anchor_path_enabled(config: Config) -> bool:
     return quote_anchor_boundaries_enabled(config) or spot_then_confirm_enabled(
         config
@@ -118,6 +138,7 @@ class QuoteAnchorClassifier:
         complete_fn: CompleteFn | None = None,
         word_cache_path: Path | None = None,
         llm_cache_dir: Path | None = None,
+        llm_cache_dirs: Sequence[Path] | None = None,
         whisper_model: str = "base",
         require_llm_cache: bool = False,
         pull_dai_bed: bool = False,
@@ -132,6 +153,10 @@ class QuoteAnchorClassifier:
         self.complete_fn = complete_fn
         self.word_cache_path = word_cache_path
         self.llm_cache_dir = llm_cache_dir
+        extras = [Path(p) for p in (llm_cache_dirs or [])]
+        if llm_cache_dir is not None and llm_cache_dir not in extras:
+            extras.insert(0, Path(llm_cache_dir))
+        self.llm_cache_dirs = extras
         self.whisper_model = whisper_model
         self.require_llm_cache = require_llm_cache
         self.pull_dai_bed = pull_dai_bed
@@ -228,7 +253,13 @@ class QuoteAnchorClassifier:
             idx += len(chunk)
 
         cuts = lexical_cuts_from_matches(
-            matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
+            matches,
+            loaded,
+            gaps,
+            pull_dai_bed=self.pull_dai_bed,
+            resume_trim=quote_resume_trim_enabled(self.config),
+            backfill_leadin=quote_backfill_leadin_enabled(self.config),
+            closer_tail=quote_closer_tail_enabled(self.config),
         )
         # Fail-closed: a match that lexical collapsed still keeps its raw span.
         if len(cuts) < len(matches):
@@ -272,6 +303,7 @@ class QuoteAnchorClassifier:
             extra_phrases=self.extra_phrases,
             extra_names=self.extra_names,
             ngram_phrases=self.ngram_phrases,
+            drop_weak=spot_weak_drop_enabled(self.config),
         )
         self.last_candidates = candidates
         ep_end = float(transcript_segments[-1].end_time or 0.0)
@@ -298,7 +330,13 @@ class QuoteAnchorClassifier:
             matches.extend(chunk_matches)
 
         cuts = lexical_cuts_from_matches(
-            matches, loaded, gaps, pull_dai_bed=self.pull_dai_bed
+            matches,
+            loaded,
+            gaps,
+            pull_dai_bed=self.pull_dai_bed,
+            resume_trim=quote_resume_trim_enabled(self.config),
+            backfill_leadin=quote_backfill_leadin_enabled(self.config),
+            closer_tail=quote_closer_tail_enabled(self.config),
         )
         if len(cuts) < len(matches):
             used = {(round(a, 3), round(b, 3)) for a, b in cuts}
@@ -564,16 +602,24 @@ class QuoteAnchorClassifier:
         return hashlib.sha1(f"{system_prompt}\n---\n{user}".encode()).hexdigest()
 
     def _read_llm_cache(self, system_prompt: str, user: str) -> dict[str, Any] | None:
-        if self.llm_cache_dir is None:
-            return None
-        path = self.llm_cache_dir / f"{self._cache_key(system_prompt, user)}.json"
-        if not path.is_file():
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-        return payload if isinstance(payload, dict) else None
+        key = f"{self._cache_key(system_prompt, user)}.json"
+        dirs: list[Path] = []
+        for path in self.llm_cache_dirs:
+            if path not in dirs:
+                dirs.append(path)
+        if self.llm_cache_dir is not None and self.llm_cache_dir not in dirs:
+            dirs.insert(0, self.llm_cache_dir)
+        for cache_dir in dirs:
+            path = cache_dir / key
+            if not path.is_file():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return None
 
     def _write_llm_cache(
         self,

@@ -537,6 +537,11 @@ def to_pydantic_config() -> PydanticConfig:
             DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES
         ),
         enable_spot_then_confirm=bool(DEFAULTS.ENABLE_SPOT_THEN_CONFIRM),
+        enable_quote_resume_trim=bool(DEFAULTS.ENABLE_QUOTE_RESUME_TRIM),
+        enable_quote_backfill_leadin=bool(DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN),
+        enable_quote_closer_tail=bool(DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL),
+        enable_spot_weak_drop=bool(DEFAULTS.ENABLE_SPOT_WEAK_DROP),
+        enable_snap_earlier_start=bool(DEFAULTS.ENABLE_SNAP_EARLIER_START),
         enable_bow_scout_gemini_confirm=bool(
             DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM
         ),
@@ -689,6 +694,41 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     )
     if env_spot_confirm is not None:
         cfg.enable_spot_then_confirm = env_spot_confirm
+
+    env_resume_trim = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_RESUME_TRIM"),
+        env_name="ENABLE_QUOTE_RESUME_TRIM",
+    )
+    if env_resume_trim is not None:
+        cfg.enable_quote_resume_trim = env_resume_trim
+
+    env_backfill = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_BACKFILL_LEADIN"),
+        env_name="ENABLE_QUOTE_BACKFILL_LEADIN",
+    )
+    if env_backfill is not None:
+        cfg.enable_quote_backfill_leadin = env_backfill
+
+    env_closer_tail = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_CLOSER_TAIL"),
+        env_name="ENABLE_QUOTE_CLOSER_TAIL",
+    )
+    if env_closer_tail is not None:
+        cfg.enable_quote_closer_tail = env_closer_tail
+
+    env_weak_drop = _parse_bool(
+        os.environ.get("ENABLE_SPOT_WEAK_DROP"),
+        env_name="ENABLE_SPOT_WEAK_DROP",
+    )
+    if env_weak_drop is not None:
+        cfg.enable_spot_weak_drop = env_weak_drop
+
+    env_earlier_start = _parse_bool(
+        os.environ.get("ENABLE_SNAP_EARLIER_START"),
+        env_name="ENABLE_SNAP_EARLIER_START",
+    )
+    if env_earlier_start is not None:
+        cfg.enable_snap_earlier_start = env_earlier_start
 
 
 def _apply_remote_whisper_runtime_overrides(whisper: RemoteWhisperConfig) -> None:

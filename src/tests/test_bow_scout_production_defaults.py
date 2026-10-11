@@ -29,6 +29,11 @@ def test_bow_scout_flag_defaults_off() -> None:
     assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
     assert config.enable_spot_then_confirm is False
     assert spot_then_confirm_enabled(config) is False
+    assert DEFAULTS.ENABLE_QUOTE_RESUME_TRIM is False
+    assert DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN is False
+    assert DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL is False
+    assert DEFAULTS.ENABLE_SPOT_WEAK_DROP is False
+    assert DEFAULTS.ENABLE_SNAP_EARLIER_START is False
 
 
 def test_config_flag_can_be_enabled_without_swapping_defaults() -> None:
@@ -64,3 +69,8 @@ def test_pydantic_config_field_defaults_false() -> None:
     field = Config.model_fields["enable_bow_scout_gemini_confirm"]
     assert field.default is False
     assert Config.model_fields["enable_spot_then_confirm"].default is False
+    assert Config.model_fields["enable_quote_resume_trim"].default is False
+    assert Config.model_fields["enable_quote_backfill_leadin"].default is False
+    assert Config.model_fields["enable_quote_closer_tail"].default is False
+    assert Config.model_fields["enable_spot_weak_drop"].default is False
+    assert Config.model_fields["enable_snap_earlier_start"].default is False

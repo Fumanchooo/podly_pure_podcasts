@@ -389,7 +389,12 @@ class AudioProcessor:
         if not audio_path:
             return merged_ad_segments_ms
         cuts_s = [(start / 1000.0, end / 1000.0) for start, end in merged_ad_segments_ms]
-        snapped = refine_cuts(cuts_s, audio_path=Path(audio_path))
+        prefer = (
+            "earlier_start"
+            if getattr(self.config, "enable_snap_earlier_start", False)
+            else "nearest"
+        )
+        snapped = refine_cuts(cuts_s, audio_path=Path(audio_path), prefer=prefer)
         return [(int(start * 1000), int(end * 1000)) for start, end in snapped]
 
     def process_audio(self, post: Post, output_path: str) -> list[tuple[int, int]]:
