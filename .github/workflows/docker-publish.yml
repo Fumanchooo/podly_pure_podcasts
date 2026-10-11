@@ -145,13 +145,6 @@ jobs:
           driver-opts: |
             image=moby/buildkit:v0.12.0
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -163,12 +156,14 @@ jobs:
             type=semver,pattern={{version}},suffix=-${{ matrix.variant.name }}-${{ env.ARCH }}
             type=raw,value=${{ matrix.variant.name }}-${{ env.ARCH }},enable={{is_default_branch}}
 
-      - name: Build and push
+      # PR smoke-test only: do not push to GHCR. Concurrent PR publishes 403
+      # (packages write) and notify on a non-required check.
+      - name: Build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          push: false
           platforms: linux/${{ env.ARCH }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
