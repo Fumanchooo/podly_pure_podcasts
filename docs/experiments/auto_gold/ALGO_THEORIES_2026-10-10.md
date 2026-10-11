@@ -115,11 +115,12 @@ openings 7/7, overcut unchanged, and 8.9→7.8 calls/ep. Holdout (now-seen)
 
 ## Live
 
-Folded: detach `podly.service` to this commit. Keep
+Folded 2026-10-10 17:52 PT: `podly.service` detached `444a20d`. Keep
 `ENABLE_QUOTE_ANCHOR_BOUNDARIES=true` `ENABLE_SPOT_THEN_CONFIRM=true`. Set
 `ENABLE_SNAP_EARLIER_START=true` `ENABLE_SPOT_WEAK_DROP=true`. Leave H1–H3
-unset. Rollback this increment: `git checkout --detach 1b7728d` and unset
-the two new flags (keep the live pair). Scout off. Local Whisper.
+unset. Env backup `/home/jdr/cursor/tmp/podly_deploy_backup_20261010_175222`.
+Rollback this increment: `git checkout --detach 1b7728d` and unset the two
+new flags (keep the live pair). Scout off. Local Whisper.
 
 ## Next (accuracy → reliability → spend)
 

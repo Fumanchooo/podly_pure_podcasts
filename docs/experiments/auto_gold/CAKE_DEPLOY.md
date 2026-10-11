@@ -5,11 +5,13 @@ Live checkout is `/home/jdr/cursor/repos/podly_pure_podcasts` (systemd
 worktree `/home/jdr/cursor/repos/podly_scorecard`, so the live dir uses a
 detached commit (git refuses the same branch in two worktrees).
 
-Current live (2026-10-10): detached `cursor/algo-theories-2026-10-10` with
-`ENABLE_QUOTE_ANCHOR_BOUNDARIES=true`, `ENABLE_SPOT_THEN_CONFIRM=true`,
-`ENABLE_SNAP_EARLIER_START=true`, `ENABLE_SPOT_WEAK_DROP=true`. See
-`ALGO_THEORIES_2026-10-10.md`. Increment rollback: `git checkout --detach
-1b7728d` (keep quote-anchor + spot-then-confirm; unset the two new flags).
+Current live (2026-10-10 17:52 PT): detached `444a20d` (algo-theories
+earlier-start + weak-drop) with `ENABLE_QUOTE_ANCHOR_BOUNDARIES=true`,
+`ENABLE_SPOT_THEN_CONFIRM=true`, `ENABLE_SNAP_EARLIER_START=true`,
+`ENABLE_SPOT_WEAK_DROP=true`. See `ALGO_THEORIES_2026-10-10.md`. Env backup:
+`/home/jdr/cursor/tmp/podly_deploy_backup_20261010_175222`. Increment
+rollback: `git checkout --detach 1b7728d` (keep quote-anchor +
+spot-then-confirm; unset the two new flags).
 Spot-then-confirm off: `git checkout --detach e902c89` and unset
 `ENABLE_SPOT_THEN_CONFIRM`. Quote-anchor off: unset those flags and
 `git checkout --detach 20ed084`.
