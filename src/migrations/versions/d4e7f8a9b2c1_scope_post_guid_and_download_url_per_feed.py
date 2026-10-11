@@ -1,7 +1,7 @@
 """scope post guid and download_url unique constraints per feed
 
 Revision ID: d4e7f8a9b2c1
-Revises: 3e5eebc6b3b1
+Revises: 8a4d0c2f3e91
 Create Date: 2026-04-13 00:00:00.000000
 
 """
@@ -12,7 +12,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision = "d4e7f8a9b2c1"
-down_revision = "3e5eebc6b3b1"
+down_revision = "8a4d0c2f3e91"
 branch_labels = None
 depends_on = None
 
