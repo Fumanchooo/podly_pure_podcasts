@@ -1,3 +1,11 @@
+## [2.7.3](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.2...v2.7.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* remux AAC/M4A podcasts without transcoding ([424c05d](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/424c05d220ecab14d10f80262353307773342d0d))
+* remux AAC/M4A podcasts without transcoding ([#247](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/247)) ([38e53ec](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/38e53ecd81bd60103f80a001bc45d068a4d689a6))
+
 ## [2.7.2](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.1...v2.7.2) (2026-10-11)
 
 
