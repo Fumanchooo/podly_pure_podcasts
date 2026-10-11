@@ -73,14 +73,60 @@ catch ≥ live, `not_ad` 0.00s, openings not worse, overcut not worse, Gemini
 `ENABLE_QUOTE_ANCHOR_BOUNDARIES=true` `ENABLE_SPOT_THEN_CONFIRM=true`; unset
 the five new flags.
 
-## Result
+## Result (folded `earlier_weak`)
 
-(filled after scoring)
+UTC 2026-10-11 Gemini **$0.000** of $0.50 (cache replay only). No fresh unseen
+set: Cake’s newest feed items have no `unprocessed_audio_path` in the live
+DB; a judge pass would spend Gemini on same-family labels and could veto a
+mechanistic $0 snap. Spotter recall stayed **21/21** orig10 and **7/7** holdout
+on every ablation, including weak-drop.
+
+### Metrics vs live `1b7728d`
+
+| set | system | catch | openings | not_ad | edge | overcut | calls/ep | in tok/ep | Gemini $ |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| original 10 | live 1b7728d | 97.93% | 7/7 | 0.00s | 23.21s | 13.31s | 8.9 | 11339 | $0 |
+| original 10 | H1 resume-trim | 97.68% | 7/7 | 0.00s | 21.56s | 10.45s | 8.9 | 11339 | $0 |
+| original 10 | H2 backfill | 93.92% | 7/7 | 0.00s | 43.58s | 14.64s | 8.9 | 11339 | $0 |
+| original 10 | H3 closer-tail | 97.93% | 7/7 | 0.00s | 23.21s | 13.31s | 8.9 | 11339 | $0 |
+| original 10 | H4 weak-drop | 97.93% | 7/7 | 0.00s | 23.21s | 13.31s | **7.8** | **10031** | $0 |
+| original 10 | H5 earlier-start | **98.05%** | 7/7 | 0.00s | **22.67s** | 13.31s | 8.9 | 11339 | $0 |
+| original 10 | earlier+weak | **98.05%** | 7/7 | 0.00s | **22.67s** | 13.31s | **7.8** | **10031** | $0 |
+| original 10 | matcher (H1–H3+H5) | 93.79% | 7/7 | 0.00s | 41.33s | 11.78s | 8.9 | 11339 | $0 |
+| holdout | live 1b7728d | 98.71% | 3/3 | 0.00s | 10.35s | 7.26s | 11.25 | 13808 | $0 |
+| holdout | H1 resume-trim | 98.71% | 3/3 | 0.00s | 10.35s | 7.26s | 11.25 | 13808 | $0 |
+| holdout | H2 backfill | 98.71% | 3/3 | 0.00s | 10.35s | 7.26s | 11.25 | 13808 | $0 |
+| holdout | H3 closer-tail | 98.71% | 3/3 | 0.00s | 10.35s | 7.26s | 11.25 | 13808 | $0 |
+| holdout | H4 weak-drop | 98.71% | 3/3 | 0.00s | 10.35s | 7.26s | **9.0** | **11274** | $0 |
+| holdout | H5 earlier-start | **99.01%** | 3/3 | 0.00s | **9.63s** | 7.26s | 11.25 | 13808 | $0 |
+| holdout | earlier+weak | **99.01%** | 3/3 | 0.00s | **9.63s** | 7.26s | **9.0** | **11274** | $0 |
+
+H1 orig10 catch fail: resume-trim ate gold-inner tails (not just WTF/Doppel
+overcut). H2 orig10 is first/last-shaped: 4s backfill still walked into
+show. H3 was a no-op on these frozen quotes. H4/H5 compose: weak-drop does
+not move cuts; earlier-start does not add calls.
+
+## Claim
+
+On the frozen original 10, `ENABLE_SNAP_EARLIER_START` +
+`ENABLE_SPOT_WEAK_DROP` raise inner catch 97.93%→98.05% with `not_ad` 0.00s,
+openings 7/7, overcut unchanged, and 8.9→7.8 calls/ep. Holdout (now-seen)
+98.71%→99.01%, 3/3, 0.00s, overcut unchanged, 11.25→9.0 calls/ep. Gemini $0.
 
 ## Live
 
-Unchanged unless a variant folds.
+Folded: detach `podly.service` to this commit. Keep
+`ENABLE_QUOTE_ANCHOR_BOUNDARIES=true` `ENABLE_SPOT_THEN_CONFIRM=true`. Set
+`ENABLE_SNAP_EARLIER_START=true` `ENABLE_SPOT_WEAK_DROP=true`. Leave H1–H3
+unset. Rollback this increment: `git checkout --detach 1b7728d` and unset
+the two new flags (keep the live pair). Scout off. Local Whisper.
 
 ## Next (accuracy → reliability → spend)
 
-(filled after scoring)
+1. **Accuracy:** never-seen episode smoke (new PM/Indicator/Prof G audio +
+   judge) — orig10/holdout leakage still applies. Do not re-enable backfill
+   without a content-gap stop.
+2. **Reliability:** Crime Junkie Freestyle 962–1021 and ATP 144–171/310–347
+   still chunk-fallback; earlier-start does not repair quote misses.
+3. **Spend:** weak-drop is the call win (Wait Wait 16→11, ATP 17→16). Cap
+   candidates further only after an unseen-sponsor check.

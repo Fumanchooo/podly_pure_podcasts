@@ -5,11 +5,13 @@ Live checkout is `/home/jdr/cursor/repos/podly_pure_podcasts` (systemd
 worktree `/home/jdr/cursor/repos/podly_scorecard`, so the live dir uses a
 detached commit (git refuses the same branch in two worktrees).
 
-Current live (2026-10-09): detached `cursor/spot-then-confirm-2026-10-09`
-with `ENABLE_QUOTE_ANCHOR_BOUNDARIES=true` and
-`ENABLE_SPOT_THEN_CONFIRM=true`. See `SPOT_THEN_CONFIRM_2026-10-09.md`.
-Increment rollback: `git checkout --detach e902c89` (keep quote-anchor;
-unset `ENABLE_SPOT_THEN_CONFIRM`). Quote-anchor off: unset both flags and
+Current live (2026-10-10): detached `cursor/algo-theories-2026-10-10` with
+`ENABLE_QUOTE_ANCHOR_BOUNDARIES=true`, `ENABLE_SPOT_THEN_CONFIRM=true`,
+`ENABLE_SNAP_EARLIER_START=true`, `ENABLE_SPOT_WEAK_DROP=true`. See
+`ALGO_THEORIES_2026-10-10.md`. Increment rollback: `git checkout --detach
+1b7728d` (keep quote-anchor + spot-then-confirm; unset the two new flags).
+Spot-then-confirm off: `git checkout --detach e902c89` and unset
+`ENABLE_SPOT_THEN_CONFIRM`. Quote-anchor off: unset those flags and
 `git checkout --detach 20ed084`.
 
 `enable_bow_scout_gemini_confirm` stays **false** (code default; not in

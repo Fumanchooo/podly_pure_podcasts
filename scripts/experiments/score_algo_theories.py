@@ -77,6 +77,10 @@ ABLATIONS = {
         "enable_spot_weak_drop": True,
         "enable_snap_earlier_start": True,
     },
+    "earlier_weak": {
+        "enable_snap_earlier_start": True,
+        "enable_spot_weak_drop": True,
+    },
 }
 
 
