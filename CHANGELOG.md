@@ -1,3 +1,11 @@
+# [2.7.0](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.6.1...v2.7.0) (2026-10-11)
+
+
+### Features
+
+* prevent auto-whitelisting back-catalog episodes on feed refresh ([77d4f7d](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/77d4f7d1c6dcf8079a57124723fb5532ae9b60b7))
+* prevent auto-whitelisting back-catalog episodes on feed refresh ([#212](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/212)) ([f5ffa3c](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/f5ffa3c97edb13973986700d1c314b1be38f8782))
+
 ## [2.6.1](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.6.0...v2.6.1) (2026-10-11)
 
 
