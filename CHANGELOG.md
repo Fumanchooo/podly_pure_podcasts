@@ -1,3 +1,16 @@
+## [2.7.2](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.1...v2.7.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **feeds:** encode GUIDs with slashes in feed and API paths ([5e54b8a](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/5e54b8a1e35d19832a1f89306708d2dad1e3c0f2)), closes [#216](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/216)
+* **feeds:** match existing posts by derived guid on refresh ([0b904a1](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/0b904a1db8101733f7d421b3473ae96ea26f66b2)), closes [#231](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/231)
+* **feeds:** reconcile GUID lookup with upstream-guid + URL self-heal ([fa91947](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/fa919477856922b635a036ce0746bf9ab0bce78b))
+* **feeds:** trust upstream <guid> verbatim and self-heal legacy rows ([6597837](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/65978373e1de7350c43925fd16edd3c16a6e52a3))
+* **feeds:** trust upstream GUIDs, encode slashes, per-feed uniqueness ([#246](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/246)) ([78b7107](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/78b7107de21674ef8f52b0beb2674feff2590a3e))
+* **migrations:** parent guid uniqueness revision on last_changed_at head ([d3b477c](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/d3b477cacabca65d98b604f7c179f65df61d8f1d))
+* scope post guid and download_url uniqueness per feed ([34374fd](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/34374fd60f026c0e4bfa2c181359fd49aa6aa418)), closes [#186](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/186) [#192](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/192)
+
 ## [2.7.1](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.0...v2.7.1) (2026-10-11)
 
 
