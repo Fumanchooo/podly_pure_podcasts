@@ -633,22 +633,14 @@ def test_refresh_feed_matches_existing_post_by_derived_guid(
     mock_feed_data,
     mock_db_session,
 ):
-    """A post must be matched by get_guid(entry), not the raw entry.id.
+    """A post must be matched by get_guid(entry).
 
-    Regression test for #231: when entry.id is not a valid UUID (the common
-    case), the stored post.guid is the uuid5 derived from the audio link, not
-    entry.id itself. Looking up existing_posts by entry.id always misses, so
-    every refresh re-created the episode as a duplicate.
-
-    entry1 already has a processed post (keyed by its derived guid); entry2 is
-    genuinely new. A correct refresh must touch the existing post (updating it,
-    not re-creating it) and create a post for only entry2.
+    Combined with #216 (trust upstream guid verbatim), get_guid returns the
+    feed's id as stored. Looking up only by a stale raw id would still miss
+    after fetch_feed rewrites entry.id. entry1 already has a processed post;
+    entry2 is genuinely new.
     """
     existing_guid = get_guid(mock_feed_data.entries[0])
-    assert existing_guid != mock_feed_data.entries[0].id, (
-        "test pre-condition: entry.id must NOT be a valid UUID, otherwise "
-        "get_guid is a no-op and the bug cannot be exercised"
-    )
     existing_post = MockPost(
         id=42,
         guid=existing_guid,

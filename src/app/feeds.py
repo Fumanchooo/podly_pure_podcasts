@@ -380,6 +380,29 @@ def _should_whitelist_new_post(
     return _should_auto_whitelist_new_posts(feed, post)
 
 
+def _find_existing_post_for_entry(
+    entry: feedparser.FeedParserDict,
+    existing_posts: dict[str, Post],
+    existing_posts_by_url: dict[str, Post],
+) -> tuple[Post | None, str | None]:
+    """Match a feed entry to a stored post by GUID, then by audio URL.
+
+    The URL fallback heals rows whose guid was synthesized from the enclosure
+    URL by the legacy ``get_guid`` hash. Returns ``(post, repaired_guid)``.
+    """
+    entry_guid = get_guid(entry)
+    existing_post = existing_posts.get(entry_guid)
+    if existing_post is not None:
+        return existing_post, None
+    audio_url = find_audio_link(entry)
+    if not audio_url:
+        return None, None
+    existing_post = existing_posts_by_url.get(audio_url)
+    if existing_post is not None and existing_post.guid != entry_guid:
+        return existing_post, entry_guid
+    return existing_post, None
+
+
 def refresh_feed(feed: Feed) -> None:
     logger.info(f"Refreshing feed with ID: {feed.id}")
     feed_data = fetch_feed(feed.rss_url)
@@ -427,20 +450,9 @@ def refresh_feed(feed: Feed) -> None:
     new_posts = []
     existing_post_updates = []
     for entry in feed_data.entries:
-        entry_guid = get_guid(entry)
-        existing_post = existing_posts.get(entry_guid)
-        repaired_guid: str | None = None
-        if existing_post is None:
-            # GUID didn't match; try recovering by audio URL. This catches
-            # posts whose stored guid was synthesized from the enclosure URL
-            # by the legacy `get_guid` fallback. Without this lookup, the
-            # corrected upstream guid would orphan the existing row and the
-            # episode would re-appear to subscribers as new.
-            audio_url = find_audio_link(entry)
-            if audio_url:
-                existing_post = existing_posts_by_url.get(audio_url)
-                if existing_post is not None and existing_post.guid != entry_guid:
-                    repaired_guid = entry_guid
+        existing_post, repaired_guid = _find_existing_post_for_entry(
+            entry, existing_posts, existing_posts_by_url
+        )
         if existing_post is None:
             logger.debug("found new podcast: %s", entry.title)
             p = make_post(feed, entry)
