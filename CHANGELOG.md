@@ -1,3 +1,13 @@
+## [2.6.1](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.6.0...v2.6.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **config:** keep env overrides after saving settings ([bcf53df](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/bcf53dfa8520778f773fd3771de46f9b307fdb35))
+* **config:** keep env overrides after saving settings ([#241](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/241)) ([0123a41](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/0123a41faad9104774b350f61015ab147fb0d978))
+* **migrations:** merge duplicate alembic heads ([b386d02](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/b386d027be24d89131496e36968f797ab22d6587)), closes [podly-pure-podcasts/podly_pure_podcasts#234](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/234)
+* **migrations:** merge duplicate alembic heads ([#240](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/240)) ([638e297](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/638e297ce4fe473efa4ddf13e59072a6d7d2f456))
+
 # [2.6.0](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.5.0...v2.6.0) (2026-07-25)
 
 
