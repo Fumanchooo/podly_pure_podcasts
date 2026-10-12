@@ -44,7 +44,26 @@ Select your preferred method in the Config page (`/config`).
 
 ## Remote Setup
 
-Podly automatically detects reverse proxies and generates appropriate URLs via request headers.
+For a TLS reverse proxy that sends `X-Forwarded-Proto`, set `PODLY_TRUSTED_PROXY`
+to the immediate proxy peer's exact IPv4 address as seen by Waitress. Podly then
+accepts `X-Forwarded-Proto` from that peer so generated feed enclosure URLs use
+`https`. Only one peer IP is supported; wildcards, CIDRs, address lists,
+hostnames, and IPv6 addresses are rejected at startup. When a configured setting
+no longer matches the proxy, Waitress logs the untrusted proxy headers it drops.
+
+- The proxy must overwrite `X-Forwarded-Proto` with a single value. A
+  comma-separated chain from a trusted peer is rejected with `400 Bad Request`.
+- Only trust an address that ordinary clients cannot connect from. With Docker
+  published ports, every client may appear as the bridge gateway (for example
+  `172.20.0.1`); trusting that address lets any client choose the scheme. Put
+  the proxy on a shared Docker network instead and pin its container IP.
+- Forwarded client addresses and hosts are not trusted; authentication rate
+  limits use the socket peer address.
+
+Independently of this setting, Podly also infers the scheme from other request headers
+(such as `X-Forwarded-Ssl`, `X-Forwarded-Scheme`, `CF-Visitor` and
+`Strict-Transport-Security`) and builds URLs from the `Host` header. These
+headers are client-controlled and only affect the URLs in that client's response.
 
 ### Reverse Proxy Examples
 
@@ -56,7 +75,7 @@ server {
     server_name your-domain.com;
 
     location / {
-        proxy_pass http://localhost:5001;
+        proxy_pass http://127.0.0.1:5001;  # PODLY_TRUSTED_PROXY=127.0.0.1
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -76,7 +95,7 @@ labels:
   - "traefik.http.services.podly.loadbalancer.server.port=5001"
 ```
 
-> **Note**: Most modern reverse proxies automatically set the required headers. No manual configuration is needed in most cases.
+> **Note**: For proxies that only send `X-Forwarded-Proto` (Nginx and Traefik defaults), set `PODLY_TRUSTED_PROXY` to the proxy's IP or feed URLs stay `http`.
 
 ### Built-in Authentication
 
