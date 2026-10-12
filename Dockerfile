@@ -114,12 +114,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     echo "Installing full dependencies without CUDA torch; installing ROCm torch 2.13.0"; \
     uv sync --frozen --no-dev --no-install-project --no-install-package torch; \
     uv pip install "torch==2.13.0" --index-url "https://download.pytorch.org/whl/rocm${ROCM_VERSION}"; \
-    uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall -y; \
+    uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall; \
     else \
     echo "Installing full dependencies without CUDA torch; installing CPU torch 2.13.0"; \
     uv sync --frozen --no-dev --no-install-project --no-install-package torch; \
     uv pip install "torch==2.13.0" --index-url https://download.pytorch.org/whl/cpu; \
-    uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall -y; \
+    uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall; \
     fi
 
 # Copy application code
