@@ -28,8 +28,10 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 # Used by run_podly_docker.sh for the NVIDIA *base image* tag
 # (still nvidia/cuda:12.4.1-cudnn-devel). Pip torch 2.13 bundles CUDA 13.
+# ROCm: torch 2.13.0 has no wheel on the rocm6.4 index (only 2.8/2.9).
+# 2.13.0+rocm7.1 exists; keep the base image and this ARG in lockstep.
 ARG CUDA_VERSION=12.4.1
-ARG ROCM_VERSION=6.4
+ARG ROCM_VERSION=7.1
 ARG USE_GPU=false
 ARG USE_GPU_NVIDIA=${USE_GPU}
 ARG USE_GPU_AMD=false
@@ -97,7 +99,8 @@ RUN if [ -f /etc/debian_version ]; then \
 # (nvidia-cudnn-cu13, not cu12). If we uv-sync that into a CPU image and
 # then swap torch in a later layer, the CUDA 13 wheels stay in the image.
 # Skip installing torch during sync for CPU/ROCm, then install the matching
-# wheel. NVIDIA GPU keeps the lockfile CUDA 13 stack (do not install
+# wheel (CPU index, or rocm${ROCM_VERSION} which must publish torch 2.13.0).
+# NVIDIA GPU keeps the lockfile CUDA 13 stack (do not install
 # nvidia-cudnn-cu12 — it is incompatible with torch 2.13).
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -e && \
