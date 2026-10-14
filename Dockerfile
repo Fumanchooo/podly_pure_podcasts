@@ -116,12 +116,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     elif [ "${USE_GPU_AMD}" = "true" ]; then \
     echo "Installing full dependencies without CUDA torch; installing ROCm torch 2.13.0"; \
     uv sync --frozen --no-dev --no-install-project --no-install-package torch; \
-    uv pip install "torch==2.13.0" --index-url "https://download.pytorch.org/whl/rocm${ROCM_VERSION}"; \
+    # --no-deps: lockfile already supplied torch's Python deps. A full resolve
+    # against the PyTorch wheel index (index-url replaces PyPI) hangs for a
+    # long time; CI previously failed even earlier because 2.13.0 is absent
+    # from rocm6.4.
+    uv pip install --no-deps "torch==2.13.0" --index-url "https://download.pytorch.org/whl/rocm${ROCM_VERSION}"; \
     uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall; \
     else \
     echo "Installing full dependencies without CUDA torch; installing CPU torch 2.13.0"; \
     uv sync --frozen --no-dev --no-install-project --no-install-package torch; \
-    uv pip install "torch==2.13.0" --index-url https://download.pytorch.org/whl/cpu; \
+    uv pip install --no-deps "torch==2.13.0" --index-url https://download.pytorch.org/whl/cpu; \
     uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall; \
     fi
 
