@@ -1,3 +1,11 @@
+## [2.7.7](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.6...v2.7.7) (2026-10-14)
+
+
+### Bug Fixes
+
+* **docker:** install torch 2.13 ROCm wheel from the rocm7.1 index ([2ce9f0d](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/2ce9f0d05fea4621201bf1622b44e6f02310b914)), closes [#250](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/250)
+* **docker:** install variant torch wheels with --no-deps ([5077d7d](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/5077d7d18682949c00dde9e46c2403bc17a86ca1))
+
 ## [2.7.6](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.5...v2.7.6) (2026-10-14)
 
 
