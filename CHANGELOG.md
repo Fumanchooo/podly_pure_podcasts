@@ -1,3 +1,13 @@
+## [2.7.6](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.5...v2.7.6) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** bump vulnerable Python and frontend packages ([ab715d9](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/ab715d9d1dcff990dc23b11fbf84da3024fa96bc))
+* **docker:** drop leftover CUDA 13 libs from the CPU image ([495aaa9](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/495aaa9a127b7d8952ecaae3ffac19fbf76555be))
+* **docker:** install CPU torch 2.13 wheel in the full image ([dd97585](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/dd9758500faab3552bb8585d94e7b078482a5622))
+* **docker:** uv pip uninstall does not accept -y ([aa06fce](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/aa06fce36dbb6c6d64bc98ebf9a2f6b13b5f6c0e))
+
 ## [2.7.5](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.4...v2.7.5) (2026-10-13)
 
 
