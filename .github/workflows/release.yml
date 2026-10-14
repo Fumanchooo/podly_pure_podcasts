@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   release:
+    if: github.repository == 'podly-pure-podcasts/podly_pure_podcasts'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

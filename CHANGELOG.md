@@ -1,3 +1,17 @@
+## [2.7.5](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.4...v2.7.5) (2026-10-13)
+
+
+### Bug Fixes
+
+* **web:** trust HTTPS scheme from a configured proxy peer ([7061c50](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/7061c50a76e5dd6017c22a31233324956ab652a0))
+
+## [2.7.4](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.3...v2.7.4) (2026-10-13)
+
+
+### Bug Fixes
+
+* **auth:** isolate feed-token backoff and bound limiter storage ([12c526c](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/12c526c32b6492802012527d1f424869af29ed28))
+
 ## [2.7.3](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.2...v2.7.3) (2026-10-11)
 
 
