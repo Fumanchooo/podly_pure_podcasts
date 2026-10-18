@@ -1,4 +1,5 @@
 import os
+from ipaddress import IPv4Address
 
 from waitress import serve
 
@@ -16,12 +17,28 @@ def main() -> None:
     except ValueError:
         threads = 1
 
+    # Waitress string-matches one immediate peer, so the value must be in the
+    # canonical form REMOTE_ADDR takes. The server binds IPv4 only.
+    trusted_proxy = os.environ.get("PODLY_TRUSTED_PROXY", "").strip() or None
+    if trusted_proxy is not None:
+        try:
+            trusted_proxy = str(IPv4Address(trusted_proxy))
+        except ValueError as exc:
+            raise ValueError(
+                "PODLY_TRUSTED_PROXY must be the IPv4 address of the immediate proxy peer"
+            ) from exc
+
     port = os.environ.get("PORT", 5001)
     serve(
         app,
         host="0.0.0.0",
         port=port,
         threads=threads,
+        trusted_proxy=trusted_proxy,
+        # Preserve the socket peer used by authentication rate limits.
+        trusted_proxy_headers={"x-forwarded-proto"} if trusted_proxy else set(),
+        # A proxy whose address changed would otherwise silently revert to http.
+        log_untrusted_proxy_headers=trusted_proxy is not None,
     )
 
 

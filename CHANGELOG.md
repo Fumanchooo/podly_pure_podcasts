@@ -1,3 +1,35 @@
+## [2.7.7](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.6...v2.7.7) (2026-10-14)
+
+
+### Bug Fixes
+
+* **docker:** install torch 2.13 ROCm wheel from the rocm7.1 index ([2ce9f0d](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/2ce9f0d05fea4621201bf1622b44e6f02310b914)), closes [#250](https://github.com/podly-pure-podcasts/podly_pure_podcasts/issues/250)
+* **docker:** install variant torch wheels with --no-deps ([5077d7d](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/5077d7d18682949c00dde9e46c2403bc17a86ca1))
+
+## [2.7.6](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.5...v2.7.6) (2026-10-14)
+
+
+### Bug Fixes
+
+* **deps:** bump vulnerable Python and frontend packages ([ab715d9](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/ab715d9d1dcff990dc23b11fbf84da3024fa96bc))
+* **docker:** drop leftover CUDA 13 libs from the CPU image ([495aaa9](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/495aaa9a127b7d8952ecaae3ffac19fbf76555be))
+* **docker:** install CPU torch 2.13 wheel in the full image ([dd97585](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/dd9758500faab3552bb8585d94e7b078482a5622))
+* **docker:** uv pip uninstall does not accept -y ([aa06fce](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/aa06fce36dbb6c6d64bc98ebf9a2f6b13b5f6c0e))
+
+## [2.7.5](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.4...v2.7.5) (2026-10-13)
+
+
+### Bug Fixes
+
+* **web:** trust HTTPS scheme from a configured proxy peer ([7061c50](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/7061c50a76e5dd6017c22a31233324956ab652a0))
+
+## [2.7.4](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.3...v2.7.4) (2026-10-13)
+
+
+### Bug Fixes
+
+* **auth:** isolate feed-token backoff and bound limiter storage ([12c526c](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/12c526c32b6492802012527d1f424869af29ed28))
+
 ## [2.7.3](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.2...v2.7.3) (2026-10-11)
 
 
