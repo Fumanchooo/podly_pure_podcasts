@@ -1,3 +1,12 @@
+## [2.7.8](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.7...v2.7.8) (2026-10-18)
+
+
+### Performance Improvements
+
+* **posts:** count whitelist state without loading episodes ([afa1d9b](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/afa1d9bf5408f8d67d88538a6bc6852ed1eb0764))
+* **scheduler:** refresh feeds in separate ORM sessions ([d9e2b26](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/d9e2b26e0e3782a543276312c0ad39cab4ce42dd))
+* **writer:** join feed titles and batch job lookups in audio cleanup ([36a25ab](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/36a25abefdd8fe82598b7a8e66eb9a26ea8b277a))
+
 ## [2.7.7](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.6...v2.7.7) (2026-10-14)
 
 
