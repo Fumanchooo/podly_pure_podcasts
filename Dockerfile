@@ -26,8 +26,12 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
+# Used by run_podly_docker.sh for the NVIDIA *base image* tag
+# (still nvidia/cuda:12.4.1-cudnn-devel). Pip torch 2.13 bundles CUDA 13.
+# ROCm: torch 2.13.0 has no wheel on the rocm6.4 index (only 2.8/2.9).
+# 2.13.0+rocm7.1 exists; keep the base image and this ARG in lockstep.
 ARG CUDA_VERSION=12.4.1
-ARG ROCM_VERSION=6.4
+ARG ROCM_VERSION=7.1
 ARG USE_GPU=false
 ARG USE_GPU_NVIDIA=${USE_GPU}
 ARG USE_GPU_AMD=false
@@ -90,31 +94,39 @@ RUN if [ -f /etc/debian_version ]; then \
     apt-get remove -y python3-blinker 2>/dev/null || true; \
     fi
 
-# Install dependencies conditionally based on LITE_BUILD
+# Install Python deps and the variant-specific torch wheel in ONE layer.
+# uv.lock pins torch 2.13.0, whose default Linux wheels pull CUDA 13
+# (nvidia-cudnn-cu13, not cu12). If we uv-sync that into a CPU image and
+# then swap torch in a later layer, the CUDA 13 wheels stay in the image.
+# Skip installing torch during sync for CPU/ROCm, then install the matching
+# wheel (CPU index, or rocm${ROCM_VERSION} which must publish torch 2.13.0).
+# NVIDIA GPU keeps the lockfile CUDA 13 stack (do not install
+# nvidia-cudnn-cu12 — it is incompatible with torch 2.13).
 RUN --mount=type=cache,target=/root/.cache/uv \
     set -e && \
     if [ "${LITE_BUILD}" = "true" ]; then \
-    echo "Installing lite dependencies (without Whisper)"; \
-    echo "Using lite pyproject:" && \
+    echo "Installing lite dependencies (without Whisper/torch)"; \
     cp pyproject.lite.toml pyproject.toml && \
     cp uv.lite.lock uv.lock && \
     uv sync --frozen --no-dev --no-install-project; \
-    else \
-    echo "Installing full dependencies (including Whisper)"; \
-    echo "Using full pyproject:" && \
-    uv sync --frozen --no-dev --no-install-project; \
-    fi
-
-# Install PyTorch with CUDA support if using NVIDIA image (skip if LITE_BUILD)
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "${LITE_BUILD}" = "true" ]; then \
     echo "Skipping PyTorch installation in lite mode"; \
     elif [ "${USE_GPU}" = "true" ] || [ "${USE_GPU_NVIDIA}" = "true" ]; then \
-    uv pip install nvidia-cudnn-cu12 torch; \
+    echo "Installing full dependencies with lockfile torch 2.13.0 (CUDA 13 / nvidia-cudnn-cu13)"; \
+    uv sync --frozen --no-dev --no-install-project; \
     elif [ "${USE_GPU_AMD}" = "true" ]; then \
-    uv pip install torch --index-url https://download.pytorch.org/whl/rocm${ROCM_VERSION}; \
+    echo "Installing full dependencies without CUDA torch; installing ROCm torch 2.13.0"; \
+    uv sync --frozen --no-dev --no-install-project --no-install-package torch; \
+    # --no-deps: lockfile already supplied torch's Python deps. A full resolve
+    # against the PyTorch wheel index (index-url replaces PyPI) hangs for a
+    # long time; CI previously failed even earlier because 2.13.0 is absent
+    # from rocm6.4.
+    uv pip install --no-deps "torch==2.13.0" --index-url "https://download.pytorch.org/whl/rocm${ROCM_VERSION}"; \
+    uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall; \
     else \
-    uv pip install torch --index-url https://download.pytorch.org/whl/cpu; \
+    echo "Installing full dependencies without CUDA torch; installing CPU torch 2.13.0"; \
+    uv sync --frozen --no-dev --no-install-project --no-install-package torch; \
+    uv pip install --no-deps "torch==2.13.0" --index-url https://download.pytorch.org/whl/cpu; \
+    uv pip freeze | awk -F== 'tolower($1) ~ /^(nvidia-|cuda-)/ {print $1}' | xargs -r uv pip uninstall; \
     fi
 
 # Copy application code
