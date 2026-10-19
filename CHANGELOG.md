@@ -1,3 +1,10 @@
+## [2.7.9](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.8...v2.7.9) (2026-10-19)
+
+
+### Performance Improvements
+
+* **jobs:** reduce scheduling query allocations ([3f46d90](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/3f46d904d71d3523ac03971a616296d0f5166379))
+
 ## [2.7.8](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.7...v2.7.8) (2026-10-18)
 
 
