@@ -15,7 +15,7 @@ from app.extensions import db
 from app.models import Post, ProcessingJob, TranscriptSegment
 from app.writer.client import writer_client
 from podcast_processor.ad_classifier import AdClassifier
-from podcast_processor.audio import clip_segments_exact
+from podcast_processor.audio import clip_segments_exact, get_audio_duration_ms
 from podcast_processor.audio_processor import AudioProcessor
 from podcast_processor.chapter_ad_detector import (
     ChapterAdDetector,
@@ -858,12 +858,18 @@ class PodcastProcessor:
         """
         # Update the database with the processed audio path
         self._remove_unprocessed_audio(post)
-        update_data = {
+        update_data: dict[str, Any] = {
             "processed_audio_path": processed_audio_path,
             "unprocessed_audio_path": None,
         }
         if chapter_data is not None:
             update_data["chapter_data"] = chapter_data
+        # Feeds and stats read Post.duration as the processed runtime, and not
+        # every strategy cuts audio through AudioProcessor, which also stores it.
+        processed_duration_ms = get_audio_duration_ms(processed_audio_path)
+        if processed_duration_ms:
+            post.duration = processed_duration_ms / 1000.0
+            update_data["duration"] = post.duration
         result = writer_client.update(
             "Post",
             post.id,
