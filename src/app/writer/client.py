@@ -10,6 +10,12 @@ from app.ipc import make_client_manager
 from app.writer.model_ops import execute_model_command
 from app.writer.protocol import WriteCommand, WriteCommandType, WriteResult
 
+# How long a caller waits for the writer's reply. A write can first wait up to
+# SQLite's busy_timeout (90 s, see app/__init__.py) for the database lock, so the
+# reply wait has to outlast that; otherwise the caller fails a write that then
+# commits anyway.
+WRITER_REPLY_TIMEOUT_SEC = 120
+
 
 class WriterClient:
     def __init__(self) -> None:
@@ -127,7 +133,10 @@ class WriterClient:
         )
 
     def submit(
-        self, cmd: WriteCommand, wait: bool = False, timeout: int = 10
+        self,
+        cmd: WriteCommand,
+        wait: bool = False,
+        timeout: float = WRITER_REPLY_TIMEOUT_SEC,
     ) -> WriteResult | None:
         reply_q: Queue[Any] | None = None
         if not self.queue:
