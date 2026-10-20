@@ -1,3 +1,15 @@
+## [2.7.11](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.10...v2.7.11) (2026-10-20)
+
+
+### Bug Fixes
+
+* **processing:** store the processed runtime for every strategy ([eb6eedd](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/eb6eedd3539bbc31f56372f988fbab79dc1521ba))
+
+
+### Performance Improvements
+
+* **feeds:** cache processed-audio durations instead of probing every request ([9baff93](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/9baff933d86fd56f058fb5d2a95357e1d276a07e))
+
 ## [2.7.10](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.9...v2.7.10) (2026-10-20)
 
 
