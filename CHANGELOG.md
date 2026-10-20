@@ -1,3 +1,10 @@
+## [2.7.12](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.11...v2.7.12) (2026-10-20)
+
+
+### Performance Improvements
+
+* **feeds:** gzip feed XML for clients that accept it ([fee7e90](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/fee7e90661e2248f44f441e4d6441e8936f7dc3d))
+
 ## [2.7.11](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.10...v2.7.11) (2026-10-20)
 
 
