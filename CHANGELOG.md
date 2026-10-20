@@ -1,3 +1,10 @@
+## [2.7.10](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.9...v2.7.10) (2026-10-20)
+
+
+### Bug Fixes
+
+* **ci:** fail scripts/ci.sh when lint or tests fail ([2fe6644](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/2fe66443c625733daea20b3cf47be26beaf890aa))
+
 ## [2.7.9](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.8...v2.7.9) (2026-10-19)
 
 
