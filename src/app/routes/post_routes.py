@@ -165,6 +165,7 @@ def api_feed_posts(feed_id: int) -> flask.Response:
             "duration": post.duration,
             "whitelisted": post.whitelisted,
             "has_processed_audio": post.processed_audio_path is not None,
+            "processing_failed": bool(post.processing_failed),
             "has_unprocessed_audio": post.unprocessed_audio_path is not None,
             "download_url": post.download_url,
             "image_url": post.image_url,
@@ -270,6 +271,7 @@ def get_post_json(p_guid: str) -> flask.Response:
         "processed_audio_path": post.processed_audio_path,
         "has_unprocessed_audio": post.unprocessed_audio_path is not None,
         "has_processed_audio": post.processed_audio_path is not None,
+        "processing_failed": bool(post.processing_failed),
         "transcript_segment_count": segment_count,
         "transcript_sample": transcript_segments,
         "model_call_count": post.model_calls.count(),
@@ -544,7 +546,10 @@ def api_post_stats(p_guid: str) -> flask.Response:
 
     # post.duration is the cut (ad-removed) audio length; reconstruct original by adding
     # back the removed ad time so the percentage uses the correct denominator.
-    original_duration_seconds = cut_duration_seconds + ad_time_seconds
+    # An episode published without ad removal still has its full length.
+    original_duration_seconds = cut_duration_seconds
+    if not post.processing_failed:
+        original_duration_seconds += ad_time_seconds
 
     ad_percentage = (
         (ad_time_seconds / original_duration_seconds) * 100
@@ -562,6 +567,7 @@ def api_post_stats(p_guid: str) -> flask.Response:
             ),
             "whitelisted": post.whitelisted,
             "has_processed_audio": post.processed_audio_path is not None,
+            "processing_failed": bool(post.processing_failed),
             "download_count": post.download_count,
         },
         "ad_detection_strategy": ad_detection_strategy,

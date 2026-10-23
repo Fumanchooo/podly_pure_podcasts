@@ -971,3 +971,53 @@ def test_toggle_whitelist_all_does_not_load_post_entities(app, initial_statuses)
             feed_id=feed_id, whitelisted=expected_status
         ).count() == len(initial_statuses)
     assert Post.query.filter_by(feed_id=other_id, whitelisted=False).count() == 1
+
+
+@pytest.mark.parametrize(
+    ("processing_failed", "expected_original_duration"),
+    [(False, 110.0), (True, 100.0)],
+)
+def test_post_stats_and_feed_posts_report_processing_failed(
+    app, processing_failed, expected_original_duration
+):
+    """An episode published without ad removal keeps its full length."""
+    app.testing = True
+    app.register_blueprint(post_bp)
+
+    with app.app_context():
+        feed = Feed(title="Fallback Feed", rss_url="https://example.com/feed.xml")
+        db.session.add(feed)
+        db.session.commit()
+
+        post = Post(
+            feed_id=feed.id,
+            guid="fallback-stats-guid",
+            download_url="https://example.com/audio.mp3",
+            title="Fallback Episode",
+            whitelisted=True,
+            processed_audio_path="/tmp/fallback-stats.mp3",
+            duration=100,
+            refined_ad_boundaries=[{"refined_start": 10.0, "refined_end": 20.0}],
+            processing_failed=processing_failed,
+        )
+        db.session.add(post)
+        db.session.commit()
+        feed_id = feed.id
+        guid = post.guid
+
+    client = app.test_client()
+    stats_response = client.get(f"/api/posts/{guid}/stats")
+    posts_response = client.get(f"/api/feeds/{feed_id}/posts")
+
+    assert stats_response.status_code == 200
+    stats = stats_response.get_json()
+    assert stats["post"]["processing_failed"] is processing_failed
+    assert stats["processing_stats"]["estimated_ad_time_seconds"] == 10.0
+    assert (
+        stats["processing_stats"]["original_duration_seconds"]
+        == expected_original_duration
+    )
+
+    assert posts_response.status_code == 200
+    item = posts_response.get_json()["items"][0]
+    assert item["processing_failed"] is processing_failed
