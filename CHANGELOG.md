@@ -1,3 +1,15 @@
+# [2.8.0](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.14...v2.8.0) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ad-classifier:** retry bad LLM output, fail incomplete classification ([731b454](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/731b454e5a7d8e9b6dc3a551293e3525af590a7d))
+
+
+### Features
+
+* **processor:** publish without ad removal when ad detection is incomplete ([8e1c547](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/8e1c5471e4caaa028688e98f560f44be4a321d55))
+
 ## [2.7.14](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.13...v2.7.14) (2026-10-23)
 
 
