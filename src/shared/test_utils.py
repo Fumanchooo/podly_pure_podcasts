@@ -2,22 +2,7 @@
 Shared configuration helpers to avoid code duplication.
 """
 
-from typing import Any
-
-from app.writer.client import writer_client
-
 from .config import Config, OutputConfig, ProcessingConfig
-
-
-def force_local_writer() -> None:
-    """Execute writer commands in-process so tests never hit the live writer."""
-
-    def _submit(cmd: Any, wait: bool = False, timeout: int = 10) -> Any:
-        del timeout
-        result = writer_client._local_execute(cmd)
-        return result if wait else None
-
-    writer_client.submit = _submit  # type: ignore[method-assign]
 
 
 def create_standard_test_config(

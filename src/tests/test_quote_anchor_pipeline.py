@@ -27,7 +27,8 @@ from podcast_processor.quote_anchor_classifier import QuoteAnchorClassifier
 from shared import defaults as DEFAULTS
 from shared.config import Config
 from shared.config import TestWhisperConfig as WhisperTestConfig
-from shared.test_utils import create_standard_test_config, force_local_writer
+from shared.local_writer import force_local_writer
+from shared.test_utils import create_standard_test_config
 
 
 @pytest.fixture(autouse=True)
