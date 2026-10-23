@@ -105,11 +105,135 @@ class Config(BaseModel):
         default=DEFAULTS.ENABLE_WORD_LEVEL_BOUNDARY_REFINDER,
         description="Enable word-level (heuristic-timed) ad boundary refinement",
     )
+    enable_dsp_boundary_snap: bool = Field(
+        default=DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP,
+        description=(
+            "Snap merged cut edges to the nearest ffmpeg silencedetect gap "
+            "within ±2s. $0, no LLM. Default on after the 2026-10-05 precision fold."
+        ),
+    )
     enable_llm_chapter_fallback_tagging: bool = Field(
         default=DEFAULTS.ENABLE_LLM_CHAPTER_FALLBACK_TAGGING,
         description=(
             "When enabled, LLM processing will preserve embedded chapters or "
             "generate fallback chapter tags from description/transcript."
+        ),
+    )
+    enable_bow_scout_gemini_confirm: bool = Field(
+        default=DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM,
+        description=(
+            "Experimental: CueDetector scout + Gemini confirm instead of the "
+            "full AdClassifier LLM walk. Default off. Production Feed and "
+            "PodcastProcessor stay on the current LLM path until this is "
+            "explicitly enabled and the experimental classifier is wired."
+        ),
+    )
+    enable_quote_anchor_boundaries: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES,
+        description=(
+            "Quote-anchored ad cuts: local word-level Whisper, timestamp-free "
+            "prompt_v2, in-order fuzzy match, lexical_v2, then ±2s silence "
+            "snap. Fail-closed to segment-edge per unmatched quote. Scout "
+            "confirm stays off."
+        ),
+    )
+    enable_spot_then_confirm: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_THEN_CONFIRM,
+        description=(
+            "Spot-then-confirm instead of walking every transcript chunk: "
+            "$0 keyword/sponsor spotter, then one LLM confirm per candidate "
+            "break with padded context. Default off. Scout confirm stays off."
+        ),
+    )
+    enable_quote_resume_trim: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_RESUME_TRIM,
+        description=(
+            "Trim quote ends before show-resume sentences (okay let's do the "
+            "show / okay this is the epic…). Default off."
+        ),
+    )
+    enable_quote_backfill_leadin: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN,
+        description=(
+            "Grow quote starts backward ≤4s to a pause or sentence start. Default off."
+        ),
+    )
+    enable_quote_closer_tail: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL,
+        description=(
+            "After a CTA URL, include a short This-is-NPR/Planet-Money credit. "
+            "Default off."
+        ),
+    )
+    enable_spot_weak_drop: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_WEAK_DROP,
+        description=(
+            "Drop spotter candidates whose only hits are company names. Default off."
+        ),
+    )
+    enable_snap_earlier_start: bool = Field(
+        default=DEFAULTS.ENABLE_SNAP_EARLIER_START,
+        description=("Silence-snap cut starts only earlier, never later. Default off."),
+    )
+    enable_short_min_ad_segment: bool = Field(
+        default=DEFAULTS.ENABLE_SHORT_MIN_AD_SEGMENT,
+        description=(
+            "Lower output min ad length from 14s to 10s so short DAI "
+            "prerolls survive merge. Default off."
+        ),
+    )
+    enable_spot_minute_pad: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_MINUTE_PAD,
+        description=(
+            "Pad 60s on each side of every spotter candidate (full minute "
+            "around the spot) before LLM confirm. Default off."
+        ),
+    )
+    enable_spot_confirm_union: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_CONFIRM_UNION,
+        description=(
+            "When a confirm window extends, union first and second ad "
+            "spans instead of replacing the first result. Default off."
+        ),
+    )
+    enable_spot_wide_pad: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_WIDE_PAD,
+        description=(
+            "Pad 70s on each side of every spotter candidate before LLM "
+            "confirm. Distinct from the rejected 60s minute-pad. Default off."
+        ),
+    )
+    enable_spot_bridge_windows: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_BRIDGE_WINDOWS,
+        description=(
+            "Merge two spotter detections into one LLM confirm window when "
+            "they are less than spot_bridge_gap_seconds apart. Default off."
+        ),
+    )
+    enable_quote_prompt_full_break: bool = Field(
+        default=DEFAULTS.ENABLE_QUOTE_PROMPT_FULL_BREAK,
+        description=(
+            "Use confirm prompt v3: full-sentence quotes; sister teasers, "
+            "newsletter/follow/YouTube plugs, self-promo and membership "
+            "asks are ads. Default off."
+        ),
+    )
+    enable_spot_opening_isolate: bool = Field(
+        default=DEFAULTS.ENABLE_SPOT_OPENING_ISOLATE,
+        description=(
+            "Do not bridge the first spotter cluster into later detections, "
+            "and keep its pad at 50s even when wide-pad is on. Default off."
+        ),
+    )
+    spot_wide_pad_seconds: float = Field(
+        default=DEFAULTS.SPOT_WIDE_PAD_SECONDS,
+        description="Seconds of context on each side when wide-pad is on.",
+    )
+    spot_bridge_gap_seconds: float = Field(
+        default=DEFAULTS.SPOT_BRIDGE_GAP_SECONDS,
+        description=(
+            "Merge detections whose gap is below this many seconds when "
+            "bridge-windows is on. Default 120."
         ),
     )
     developer_mode: bool = Field(

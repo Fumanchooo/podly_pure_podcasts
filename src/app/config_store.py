@@ -24,6 +24,7 @@ from shared.config import (
     RemoteWhisperConfig,
     TestWhisperConfig,
 )
+from shared.env import groq_api_key
 
 logger = logging.getLogger("global_logger")
 
@@ -532,6 +533,24 @@ def to_pydantic_config() -> PydanticConfig:
                 DEFAULTS.ENABLE_LLM_CHAPTER_FALLBACK_TAGGING,
             )
         ),
+        enable_quote_anchor_boundaries=bool(DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES),
+        enable_spot_then_confirm=bool(DEFAULTS.ENABLE_SPOT_THEN_CONFIRM),
+        enable_quote_resume_trim=bool(DEFAULTS.ENABLE_QUOTE_RESUME_TRIM),
+        enable_quote_backfill_leadin=bool(DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN),
+        enable_quote_closer_tail=bool(DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL),
+        enable_spot_weak_drop=bool(DEFAULTS.ENABLE_SPOT_WEAK_DROP),
+        enable_snap_earlier_start=bool(DEFAULTS.ENABLE_SNAP_EARLIER_START),
+        enable_short_min_ad_segment=bool(DEFAULTS.ENABLE_SHORT_MIN_AD_SEGMENT),
+        enable_spot_minute_pad=bool(DEFAULTS.ENABLE_SPOT_MINUTE_PAD),
+        enable_spot_confirm_union=bool(DEFAULTS.ENABLE_SPOT_CONFIRM_UNION),
+        enable_spot_wide_pad=bool(DEFAULTS.ENABLE_SPOT_WIDE_PAD),
+        enable_spot_bridge_windows=bool(DEFAULTS.ENABLE_SPOT_BRIDGE_WINDOWS),
+        enable_spot_opening_isolate=bool(DEFAULTS.ENABLE_SPOT_OPENING_ISOLATE),
+        enable_quote_prompt_full_break=bool(DEFAULTS.ENABLE_QUOTE_PROMPT_FULL_BREAK),
+        spot_wide_pad_seconds=float(DEFAULTS.SPOT_WIDE_PAD_SECONDS),
+        spot_bridge_gap_seconds=float(DEFAULTS.SPOT_BRIDGE_GAP_SECONDS),
+        enable_bow_scout_gemini_confirm=bool(DEFAULTS.ENABLE_BOW_SCOUT_GEMINI_CONFIRM),
+        enable_dsp_boundary_snap=bool(DEFAULTS.ENABLE_DSP_BOUNDARY_SNAP),
         output=data["output"],
         processing=data["processing"],
         background_update_interval_minute=data["app"].get(
@@ -613,7 +632,7 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     env_llm_key = (
         os.environ.get("LLM_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("GROQ_API_KEY")
+        or groq_api_key()
     )
     if env_llm_key:
         cfg.llm_api_key = env_llm_key
@@ -667,6 +686,112 @@ def _apply_top_level_env_overrides(cfg: PydanticConfig) -> None:
     if env_llm_max_input_per_min is not None:
         cfg.llm_max_input_tokens_per_minute = env_llm_max_input_per_min
 
+    env_quote_anchor = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_ANCHOR_BOUNDARIES"),
+        env_name="ENABLE_QUOTE_ANCHOR_BOUNDARIES",
+    )
+    if env_quote_anchor is not None:
+        cfg.enable_quote_anchor_boundaries = env_quote_anchor
+
+    env_spot_confirm = _parse_bool(
+        os.environ.get("ENABLE_SPOT_THEN_CONFIRM"),
+        env_name="ENABLE_SPOT_THEN_CONFIRM",
+    )
+    if env_spot_confirm is not None:
+        cfg.enable_spot_then_confirm = env_spot_confirm
+
+    env_resume_trim = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_RESUME_TRIM"),
+        env_name="ENABLE_QUOTE_RESUME_TRIM",
+    )
+    if env_resume_trim is not None:
+        cfg.enable_quote_resume_trim = env_resume_trim
+
+    env_backfill = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_BACKFILL_LEADIN"),
+        env_name="ENABLE_QUOTE_BACKFILL_LEADIN",
+    )
+    if env_backfill is not None:
+        cfg.enable_quote_backfill_leadin = env_backfill
+
+    env_closer_tail = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_CLOSER_TAIL"),
+        env_name="ENABLE_QUOTE_CLOSER_TAIL",
+    )
+    if env_closer_tail is not None:
+        cfg.enable_quote_closer_tail = env_closer_tail
+
+    env_weak_drop = _parse_bool(
+        os.environ.get("ENABLE_SPOT_WEAK_DROP"),
+        env_name="ENABLE_SPOT_WEAK_DROP",
+    )
+    if env_weak_drop is not None:
+        cfg.enable_spot_weak_drop = env_weak_drop
+
+    env_earlier_start = _parse_bool(
+        os.environ.get("ENABLE_SNAP_EARLIER_START"),
+        env_name="ENABLE_SNAP_EARLIER_START",
+    )
+    if env_earlier_start is not None:
+        cfg.enable_snap_earlier_start = env_earlier_start
+
+    env_short_min = _parse_bool(
+        os.environ.get("ENABLE_SHORT_MIN_AD_SEGMENT"),
+        env_name="ENABLE_SHORT_MIN_AD_SEGMENT",
+    )
+    if env_short_min is not None:
+        cfg.enable_short_min_ad_segment = env_short_min
+
+    env_minute_pad = _parse_bool(
+        os.environ.get("ENABLE_SPOT_MINUTE_PAD"),
+        env_name="ENABLE_SPOT_MINUTE_PAD",
+    )
+    if env_minute_pad is not None:
+        cfg.enable_spot_minute_pad = env_minute_pad
+
+    env_confirm_union = _parse_bool(
+        os.environ.get("ENABLE_SPOT_CONFIRM_UNION"),
+        env_name="ENABLE_SPOT_CONFIRM_UNION",
+    )
+    if env_confirm_union is not None:
+        cfg.enable_spot_confirm_union = env_confirm_union
+
+    env_wide_pad = _parse_bool(
+        os.environ.get("ENABLE_SPOT_WIDE_PAD"),
+        env_name="ENABLE_SPOT_WIDE_PAD",
+    )
+    if env_wide_pad is not None:
+        cfg.enable_spot_wide_pad = env_wide_pad
+
+    env_bridge_windows = _parse_bool(
+        os.environ.get("ENABLE_SPOT_BRIDGE_WINDOWS"),
+        env_name="ENABLE_SPOT_BRIDGE_WINDOWS",
+    )
+    if env_bridge_windows is not None:
+        cfg.enable_spot_bridge_windows = env_bridge_windows
+
+    env_prompt_full_break = _parse_bool(
+        os.environ.get("ENABLE_QUOTE_PROMPT_FULL_BREAK"),
+        env_name="ENABLE_QUOTE_PROMPT_FULL_BREAK",
+    )
+    if env_prompt_full_break is not None:
+        cfg.enable_quote_prompt_full_break = env_prompt_full_break
+
+    env_opening_isolate = _parse_bool(
+        os.environ.get("ENABLE_SPOT_OPENING_ISOLATE"),
+        env_name="ENABLE_SPOT_OPENING_ISOLATE",
+    )
+    if env_opening_isolate is not None:
+        cfg.enable_spot_opening_isolate = env_opening_isolate
+
+    env_wide_pad_s = os.environ.get("SPOT_WIDE_PAD_SECONDS")
+    if env_wide_pad_s not in (None, ""):
+        cfg.spot_wide_pad_seconds = float(env_wide_pad_s)
+
+    env_bridge_gap_s = os.environ.get("SPOT_BRIDGE_GAP_SECONDS")
+    if env_bridge_gap_s not in (None, ""):
+        cfg.spot_bridge_gap_seconds = float(env_bridge_gap_s)
+
 
 def _apply_remote_whisper_runtime_overrides(whisper: RemoteWhisperConfig) -> None:
     """Apply env var overrides to remote whisper runtime config.
@@ -706,7 +831,7 @@ def _apply_groq_whisper_runtime_overrides(whisper: GroqWhisperConfig) -> None:
 
     Accepts WHISPER_GROQ_MODEL as an alias for GROQ_WHISPER_MODEL.
     """
-    groq_key = os.environ.get("GROQ_API_KEY")
+    groq_key = groq_api_key()
     if groq_key:
         whisper.api_key = groq_key
     groq_model = os.environ.get("GROQ_WHISPER_MODEL") or os.environ.get(
@@ -844,10 +969,8 @@ def _configure_groq_whisper(cfg: PydanticConfig) -> None:
     """Configure groq whisper type."""
     existing_key_any = getattr(cfg.whisper, "api_key", "")
     existing_key = existing_key_any if isinstance(existing_key_any, str) else ""
-    groq_key_env = os.environ.get("GROQ_API_KEY")
-    groq_api_key: str = (
-        groq_key_env if isinstance(groq_key_env, str) and groq_key_env else existing_key
-    )
+    groq_key_env = groq_api_key()
+    groq_api_key_val: str = groq_key_env if groq_key_env else existing_key
 
     existing_model_any = getattr(cfg.whisper, "model", DEFAULTS.WHISPER_GROQ_MODEL)
     existing_model = (
@@ -877,7 +1000,7 @@ def _configure_groq_whisper(cfg: PydanticConfig) -> None:
     )
 
     cfg.whisper = GroqWhisperConfig(
-        api_key=groq_api_key,
+        api_key=groq_api_key_val,
         model=groq_model_val,
         language=groq_lang,
         max_retries=max_retries,
@@ -894,7 +1017,7 @@ def _apply_whisper_type_override(cfg: PydanticConfig) -> None:
             logger.info(
                 "Auto-detected WHISPER_TYPE=remote from WHISPER_REMOTE_API_KEY environment variable"
             )
-        elif os.environ.get("GROQ_API_KEY") and not os.environ.get("LLM_API_KEY"):
+        elif groq_api_key() and not os.environ.get("LLM_API_KEY"):
             # Only auto-detect groq for whisper if LLM_API_KEY is not set
             # (to avoid confusion when GROQ_API_KEY is only meant for LLM)
             env_whisper_type = "groq"
