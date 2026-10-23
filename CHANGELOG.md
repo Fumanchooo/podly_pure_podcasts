@@ -1,3 +1,10 @@
+## [2.7.13](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.12...v2.7.13) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** bump certifi to 2026.10.19 (distrust emSign ECC Root CA - G3) ([9230c0a](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/9230c0a3078e1c569ae3c04ec879752ccfcf648f))
+
 ## [2.7.12](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.11...v2.7.12) (2026-10-20)
 
 
