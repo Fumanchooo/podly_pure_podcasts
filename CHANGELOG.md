@@ -1,3 +1,11 @@
+## [2.7.14](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.13...v2.7.14) (2026-10-23)
+
+
+### Bug Fixes
+
+* **writer:** derive the reply wait from the busy timeout, with an env override ([c4a8a58](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/c4a8a5893ef2d5a60e63a22f9c92c9120f06129e))
+* **writer:** wait for the writer's reply longer than SQLite's busy timeout ([9979ba6](https://github.com/podly-pure-podcasts/podly_pure_podcasts/commit/9979ba6bfcc7695676b9bc6b7302ce0e52e495ca))
+
 ## [2.7.13](https://github.com/podly-pure-podcasts/podly_pure_podcasts/compare/v2.7.12...v2.7.13) (2026-10-23)
 
 
