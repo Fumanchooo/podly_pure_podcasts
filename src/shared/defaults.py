@@ -17,50 +17,11 @@ ENABLE_WORD_LEVEL_BOUNDARY_REFINDER = False
 ENABLE_LLM_CHAPTER_FALLBACK_TAGGING = False
 # $0 ffmpeg silencedetect snap of cut edges. Folded 2026-10-05 (±2.0s nearest).
 ENABLE_DSP_BOUNDARY_SNAP = True
-# Experimental CueDetector-scout + Gemini-confirm classifier. Default off:
-# production stays on the full AdClassifier LLM walk until this is explicitly
-# enabled *and* the experimental path is wired. See docs/experiments/AGENT_EVAL.md.
-ENABLE_BOW_SCOUT_GEMINI_CONFIRM = False
-# Quote-anchor cutter (prompt_v2 + lexical_v2). Default off until the
-# original-10 + holdout gates pass; live deploy flips this True.
-ENABLE_QUOTE_ANCHOR_BOUNDARIES = False
-# Spot-then-confirm: $0 lexicon spotter + one LLM call per candidate
-# (padded region), not a full-episode chunk walk. Default off.
-ENABLE_SPOT_THEN_CONFIRM = False
-# 2026-10-10 algo-theories (all default off; live must unset).
-ENABLE_QUOTE_RESUME_TRIM = False
-ENABLE_QUOTE_BACKFILL_LEADIN = False
-ENABLE_QUOTE_CLOSER_TAIL = False
-ENABLE_SPOT_WEAK_DROP = False
-ENABLE_SNAP_EARLIER_START = False
-# Keep classified DAI prerolls in (10s, 14s), e.g. Planet Money Pushkin
-# 12.96s. Default off; live must set ENABLE_SHORT_MIN_AD_SEGMENT.
-ENABLE_SHORT_MIN_AD_SEGMENT = False
-OUTPUT_SHORT_MIN_AD_SEGMENT_LENGTH_SECONDS = 10
-# Pad 60s on each side of every spotter candidate (full minute around
-# the spot). Default 50s stays unless ENABLE_SPOT_MINUTE_PAD is set.
-ENABLE_SPOT_MINUTE_PAD = False
-# On confirm extend, union first+second ad spans instead of wiping the
-# first good confirm. Default off; live must set ENABLE_SPOT_CONFIRM_UNION.
-ENABLE_SPOT_CONFIRM_UNION = False
-# Seconds of context on each side of a spotted cluster when the minute-pad
-# flag is on. Off-path remains SPOT_PAD_S (50).
-SPOT_MINUTE_PAD_SECONDS = 60.0
-# Pad 70s each side of a spot (60s minute-pad failed holdout catch
-# 99.01%→98.06% on TAL; 70s is the CTA-only lead-in that reaches
-# Prof G "Support for the show comes from the AG one" from the URL).
-ENABLE_SPOT_WIDE_PAD = False
+# Spot-then-confirm is the only ad-detection path: bag-of-words spotter
+# windows, 70s pad, <2 min bridging, LLM quote boundaries, 10s min ad,
+# opening isolate. No feature flags.
 SPOT_WIDE_PAD_SECONDS = 70.0
-# Merge two spotter detections into one LLM confirm window when the
-# gap between them is below this (default 2 minutes).
-ENABLE_SPOT_BRIDGE_WINDOWS = False
 SPOT_BRIDGE_GAP_SECONDS = 120.0
-# Keep the first spotter cluster on the 50s pad and never bridge it
-# into the next detection. Default off.
-ENABLE_SPOT_OPENING_ISOLATE = False
-# Confirm prompt v3: full-sentence quotes; sister teasers, newsletter /
-# follow / YouTube plugs, self-promo and membership asks are ads.
-ENABLE_QUOTE_PROMPT_FULL_BREAK = False
 
 # Whisper defaults
 WHISPER_DEFAULT_TYPE = "groq"
@@ -82,7 +43,7 @@ PROCESSING_MAX_OVERLAP_SEGMENTS = 30
 # Output defaults
 OUTPUT_FADE_MS = 3000
 OUTPUT_MIN_AD_SEGMENT_SEPARATION_SECONDS = 60
-OUTPUT_MIN_AD_SEGMENT_LENGTH_SECONDS = 14
+OUTPUT_MIN_AD_SEGMENT_LENGTH_SECONDS = 10
 OUTPUT_MIN_CONFIDENCE = 0.8
 # Do not fill a hole of show content between two ads (Up First 0-24s + 73-99s
 # membership CTAs were merged through ~50s of headlines at the 60s separation).

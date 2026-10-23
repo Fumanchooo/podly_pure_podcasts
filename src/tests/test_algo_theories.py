@@ -1,4 +1,4 @@
-"""Algo-theories flags: each default off; matcher-side $0 refinements."""
+"""Spot-then-confirm production path: hardcoded clean behaviors, no flags."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from podcast_processor.boundary_snap import SilenceGap, snap_time_to_silence
 from podcast_processor.quote_anchor import QuoteAd, QuoteMatch, WordTiming
 from podcast_processor.quote_anchor_classifier import (
     SPOT_BRIDGE_GAP_S,
-    SPOT_MINUTE_PAD_S,
     SPOT_PAD_S,
     SPOT_WIDE_PAD_S,
     effective_min_ad_segment_length_seconds,
@@ -23,19 +22,7 @@ from podcast_processor.quote_anchor_classifier import (
     left_extend_adds_transcript,
     merge_spot_confirm_windows,
     prompt_version_for,
-    quote_backfill_leadin_enabled,
-    quote_closer_tail_enabled,
-    quote_prompt_full_break_enabled,
-    quote_resume_trim_enabled,
     sent_window_word_range,
-    short_min_ad_segment_enabled,
-    snap_earlier_start_enabled,
-    spot_bridge_windows_enabled,
-    spot_confirm_union_enabled,
-    spot_minute_pad_enabled,
-    spot_opening_isolate_enabled,
-    spot_weak_drop_enabled,
-    spot_wide_pad_enabled,
     union_confirm_matches,
 )
 from podcast_processor.quote_anchor_prompt import (
@@ -52,62 +39,20 @@ def _words(*pairs: tuple[str, float, float]) -> list[WordTiming]:
     return [WordTiming(word=w, start=s, end=e) for w, s, e in pairs]
 
 
-def test_algo_theory_flags_default_off() -> None:
-    assert DEFAULTS.ENABLE_QUOTE_RESUME_TRIM is False
-    assert DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN is False
-    assert DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL is False
-    assert DEFAULTS.ENABLE_SPOT_WEAK_DROP is False
-    assert DEFAULTS.ENABLE_SNAP_EARLIER_START is False
-    assert DEFAULTS.ENABLE_SHORT_MIN_AD_SEGMENT is False
-    assert DEFAULTS.ENABLE_SPOT_MINUTE_PAD is False
-    assert DEFAULTS.ENABLE_SPOT_CONFIRM_UNION is False
-    assert DEFAULTS.ENABLE_SPOT_WIDE_PAD is False
-    assert DEFAULTS.ENABLE_SPOT_BRIDGE_WINDOWS is False
-    assert DEFAULTS.ENABLE_SPOT_OPENING_ISOLATE is False
-    assert DEFAULTS.ENABLE_QUOTE_PROMPT_FULL_BREAK is False
+def test_spot_then_confirm_is_unconditional() -> None:
     assert DEFAULTS.SPOT_WIDE_PAD_SECONDS == 70.0
     assert DEFAULTS.SPOT_BRIDGE_GAP_SECONDS == 120.0
-    assert DEFAULTS.OUTPUT_SHORT_MIN_AD_SEGMENT_LENGTH_SECONDS == 10
+    assert DEFAULTS.OUTPUT_MIN_AD_SEGMENT_LENGTH_SECONDS == 10
     config = create_standard_test_config()
-    assert config.enable_quote_resume_trim is False
-    assert config.enable_quote_backfill_leadin is False
-    assert config.enable_quote_closer_tail is False
-    assert config.enable_spot_weak_drop is False
-    assert config.enable_snap_earlier_start is False
-    assert config.enable_short_min_ad_segment is False
-    assert config.enable_spot_minute_pad is False
-    assert config.enable_spot_confirm_union is False
-    assert config.enable_spot_wide_pad is False
-    assert config.enable_spot_bridge_windows is False
-    assert config.enable_spot_opening_isolate is False
-    assert config.enable_quote_prompt_full_break is False
-    assert quote_resume_trim_enabled(config) is False
-    assert quote_backfill_leadin_enabled(config) is False
-    assert quote_closer_tail_enabled(config) is False
-    assert spot_weak_drop_enabled(config) is False
-    assert snap_earlier_start_enabled(config) is False
-    assert short_min_ad_segment_enabled(config) is False
-    assert spot_minute_pad_enabled(config) is False
-    assert spot_confirm_union_enabled(config) is False
-    assert spot_wide_pad_enabled(config) is False
-    assert spot_bridge_windows_enabled(config) is False
-    assert spot_opening_isolate_enabled(config) is False
-    assert quote_prompt_full_break_enabled(config) is False
-    assert effective_spot_bridge_gap_s(config) == 0.0
+    assert "enable_spot_then_confirm" not in Config.model_fields
+    assert "enable_quote_anchor_boundaries" not in Config.model_fields
+    assert "enable_spot_wide_pad" not in Config.model_fields
+    assert "enable_spot_bridge_windows" not in Config.model_fields
+    assert "enable_spot_opening_isolate" not in Config.model_fields
+    assert effective_spot_pad_s(config) == SPOT_WIDE_PAD_S == 70.0
+    assert effective_spot_bridge_gap_s(config) == SPOT_BRIDGE_GAP_S == 120.0
     assert prompt_version_for(config) == "v2"
-    assert effective_min_ad_segment_length_seconds(config) == 14
-    assert Config.model_fields["enable_quote_resume_trim"].default is False
-    assert Config.model_fields["enable_quote_backfill_leadin"].default is False
-    assert Config.model_fields["enable_quote_closer_tail"].default is False
-    assert Config.model_fields["enable_spot_weak_drop"].default is False
-    assert Config.model_fields["enable_snap_earlier_start"].default is False
-    assert Config.model_fields["enable_short_min_ad_segment"].default is False
-    assert Config.model_fields["enable_spot_minute_pad"].default is False
-    assert Config.model_fields["enable_spot_confirm_union"].default is False
-    assert Config.model_fields["enable_spot_wide_pad"].default is False
-    assert Config.model_fields["enable_spot_bridge_windows"].default is False
-    assert Config.model_fields["enable_spot_opening_isolate"].default is False
-    assert Config.model_fields["enable_quote_prompt_full_break"].default is False
+    assert effective_min_ad_segment_length_seconds(config) == 10
 
 
 def _text_words(text: str, t0: float = 0.0, dt: float = 0.2) -> list[WordTiming]:
@@ -156,13 +101,10 @@ def test_earlier_start_does_not_snap_start_later() -> None:
     )
 
 
-def test_short_min_flag_lowers_output_floor_to_10s() -> None:
-    off = create_standard_test_config()
-    assert effective_min_ad_segment_length_seconds(off) == 14
-    on = off.model_copy(update={"enable_short_min_ad_segment": True})
-    assert short_min_ad_segment_enabled(on) is True
-    assert effective_min_ad_segment_length_seconds(on) == 10
-    assert effective_min_ad_segment_length_seconds(off) == 14
+def test_min_ad_floor_is_10s() -> None:
+    config = create_standard_test_config()
+    assert effective_min_ad_segment_length_seconds(config) == 10
+    assert DEFAULTS.OUTPUT_MIN_AD_SEGMENT_LENGTH_SECONDS == 10
 
 
 def _match(
@@ -182,15 +124,11 @@ def _match(
     )
 
 
-def test_minute_pad_flag_raises_pad_to_60s() -> None:
-    off = create_standard_test_config()
-    assert effective_spot_pad_s(off) == SPOT_PAD_S
-    on = off.model_copy(update={"enable_spot_minute_pad": True})
-    assert spot_minute_pad_enabled(on) is True
-    assert effective_spot_pad_s(on) == SPOT_MINUTE_PAD_S
-    assert effective_spot_pad_s(on, override=8.0) == SPOT_MINUTE_PAD_S
-    assert effective_spot_pad_s(off, override=8.0) == 8.0
-    assert SPOT_MINUTE_PAD_S == 60.0
+def test_spot_pad_is_70s_with_override() -> None:
+    config = create_standard_test_config()
+    assert effective_spot_pad_s(config) == SPOT_WIDE_PAD_S == 70.0
+    assert effective_spot_pad_s(config, override=8.0) == 8.0
+    assert SPOT_PAD_S == 50.0
 
 
 def test_union_confirm_keeps_first_and_joins_overlap() -> None:
@@ -257,24 +195,15 @@ def _cand(start: float, end: float) -> CandidateBreak:
     )
 
 
-def test_wide_pad_is_70s_not_the_rejected_minute_pad() -> None:
-    off = create_standard_test_config()
-    assert effective_spot_pad_s(off) == SPOT_PAD_S
-    minute = off.model_copy(update={"enable_spot_minute_pad": True})
-    wide = off.model_copy(update={"enable_spot_wide_pad": True})
-    both = off.model_copy(
-        update={"enable_spot_minute_pad": True, "enable_spot_wide_pad": True}
-    )
-    assert effective_spot_pad_s(minute) == SPOT_MINUTE_PAD_S == 60.0
-    assert effective_spot_pad_s(wide) == SPOT_WIDE_PAD_S == 70.0
-    assert effective_spot_pad_s(both) == 70.0
+def test_wide_pad_is_70s() -> None:
+    config = create_standard_test_config()
+    assert effective_spot_pad_s(config) == SPOT_WIDE_PAD_S == 70.0
+    assert DEFAULTS.SPOT_WIDE_PAD_SECONDS == 70.0
 
 
 def test_bridge_windows_merges_under_120s_not_over() -> None:
-    off = create_standard_test_config()
-    assert effective_spot_bridge_gap_s(off) == 0.0
-    on = off.model_copy(update={"enable_spot_bridge_windows": True})
-    assert effective_spot_bridge_gap_s(on) == SPOT_BRIDGE_GAP_S == 120.0
+    config = create_standard_test_config()
+    assert effective_spot_bridge_gap_s(config) == SPOT_BRIDGE_GAP_S == 120.0
     near = merge_spot_confirm_windows(
         [_cand(1048.0, 1053.0), _cand(1112.0, 1122.0)],
         pad_s=50.0,
@@ -312,11 +241,13 @@ def test_prompt_v2_recap_is_not_ad_start_awards_are_content() -> None:
     assert "Awards/thanks" in user
 
 
-def test_prompt_v3_marks_sister_teasers_and_full_sentences() -> None:
-    off = create_standard_test_config()
-    assert prompt_version_for(off) == "v2"
-    on = off.model_copy(update={"enable_quote_prompt_full_break": True})
-    assert prompt_version_for(on) == "v3"
+def test_production_prompt_stays_v2() -> None:
+    assert prompt_version_for(create_standard_test_config()) == "v2"
+    system = system_prompt_for("v2")
+    assert "host recap or tease of upcoming episode topics is show content" in system
+
+
+def test_prompt_v3_library_still_marks_sister_teasers() -> None:
     system = system_prompt_for("v3")
     assert "FULL first sentence" in system
     assert "newsletter" in system.lower()
@@ -393,10 +324,6 @@ def test_sent_window_word_range_ignores_forward_jump_leftover() -> None:
 
 
 def test_opening_isolate_keeps_first_cluster_on_50s_pad() -> None:
-    off = create_standard_test_config()
-    assert spot_opening_isolate_enabled(off) is False
-    on = off.model_copy(update={"enable_spot_opening_isolate": True})
-    assert spot_opening_isolate_enabled(on) is True
     merged = merge_spot_confirm_windows(
         [_cand(0.0, 24.0), _cand(71.4, 86.0)],
         pad_s=70.0,

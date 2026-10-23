@@ -10,7 +10,6 @@ from podcast_processor.ad_spotter import (
 )
 from podcast_processor.quote_anchor import WordTiming
 from podcast_processor.sponsor_lexicon import URL_TLDS
-from shared import defaults as DEFAULTS
 
 
 def _words(text: str, t0: float = 0.0, dt: float = 0.2) -> list[WordTiming]:
@@ -21,17 +20,6 @@ def _words(text: str, t0: float = 0.0, dt: float = 0.2) -> list[WordTiming]:
         words.append(WordTiming(word=raw, start=t, end=end))
         t = end
     return words
-
-
-def test_spot_flag_defaults_off() -> None:
-    assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
-    assert DEFAULTS.ENABLE_SPOT_WEAK_DROP is False
-    assert DEFAULTS.ENABLE_SPOT_MINUTE_PAD is False
-    assert DEFAULTS.ENABLE_SPOT_CONFIRM_UNION is False
-    assert DEFAULTS.ENABLE_SPOT_WIDE_PAD is False
-    assert DEFAULTS.ENABLE_SPOT_BRIDGE_WINDOWS is False
-    assert DEFAULTS.ENABLE_SPOT_OPENING_ISOLATE is False
-    assert DEFAULTS.ENABLE_QUOTE_PROMPT_FULL_BREAK is False
 
 
 def test_spots_donate_and_support_membership() -> None:

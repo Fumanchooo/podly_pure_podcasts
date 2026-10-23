@@ -11,7 +11,6 @@ from podcast_processor.boundary_snap import refine_cuts
 from podcast_processor.quote_anchor import QUOTE_ANCHOR_SOURCE
 from podcast_processor.quote_anchor_classifier import (
     effective_min_ad_segment_length_seconds,
-    quote_anchor_path_enabled,
 )
 from shared import defaults as DEFAULTS
 from shared.config import Config
@@ -55,15 +54,14 @@ class AudioProcessor:
         """
         self.logger.info(f"Retrieving ad segments from database for post {post.id}.")
 
-        if quote_anchor_path_enabled(self.config):
-            quote_cuts = self._quote_anchor_cuts(post)
-            if quote_cuts is not None:
-                self.logger.info(
-                    "Using quote-anchor cuts for post %s n=%s",
-                    post.id,
-                    len(quote_cuts),
-                )
-                return quote_cuts
+        quote_cuts = self._quote_anchor_cuts(post)
+        if quote_cuts is not None:
+            self.logger.info(
+                "Using quote-anchor cuts for post %s n=%s",
+                post.id,
+                len(quote_cuts),
+            )
+            return quote_cuts
 
         query = (
             self.identification_query
@@ -392,11 +390,7 @@ class AudioProcessor:
         cuts_s = [
             (start / 1000.0, end / 1000.0) for start, end in merged_ad_segments_ms
         ]
-        prefer = (
-            "earlier_start"
-            if getattr(self.config, "enable_snap_earlier_start", False)
-            else "nearest"
-        )
+        prefer = "earlier_start"
         snapped = refine_cuts(cuts_s, audio_path=Path(audio_path), prefer=prefer)
         return [(int(start * 1000), int(end * 1000)) for start, end in snapped]
 

@@ -275,6 +275,10 @@ class TestEnvOverriddenFieldStripping:
         """Verify that whisper env-overridden fields are stripped."""
         monkeypatch.setenv("WHISPER_REMOTE_TIMEOUT_SEC", "120")
         monkeypatch.setenv("WHISPER_REMOTE_CHUNKSIZE_MB", "48")
+        monkeypatch.delenv("WHISPER_LOCAL_MODEL", raising=False)
+        monkeypatch.delenv("WHISPER_GROQ_MODEL", raising=False)
+        monkeypatch.delenv("GROQ_WHISPER_MODEL", raising=False)
+        monkeypatch.delenv("WHISPER_REMOTE_MODEL", raising=False)
 
         from app.routes.config_routes import _strip_env_overridden_fields
 

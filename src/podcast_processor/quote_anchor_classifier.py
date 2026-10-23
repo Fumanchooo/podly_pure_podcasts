@@ -1,9 +1,12 @@
-"""Production quote-anchor classifier (prompt_v2 + lexical_v2).
+"""Production quote-anchor classifier (spot-then-confirm).
 
-Word-level Whisper (local CPU) → timestamp-free quote request → in-order
-fuzzy match → lexical_v2 → Identification rows + stored cuts. AudioProcessor
-then applies the existing ±2s silence snap. Fail-closed: never drop a
-reported ad (segment-edge, then chunk span). Scout confirm stays off.
+Bag-of-words spotter windows (70s pad, bridged under 2 min, opening
+isolate) → timestamp-free quote request on those regions only → in-order
+fuzzy match → lexical_v2 → Identification rows + stored cuts.
+AudioProcessor then applies ±2s silence snap (start-only earlier).
+Fail-closed: never drop a reported ad (segment-edge, then chunk span).
+The whole-transcript chunk walk is gone; ads with no spotter word are
+not sent to the LLM.
 """
 
 from __future__ import annotations
@@ -16,12 +19,16 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import litellm
 
 from app.models import ModelCall, Post, TranscriptSegment
 from app.writer.client import writer_client
+from podcast_processor.ad_classifier import (
+    ClassificationIncompleteError,
+    InvalidModelOutputError,
+)
 from podcast_processor.ad_spotter import CandidateBreak, spot_candidates
 from podcast_processor.boundary_snap import detect_silence_gaps, interpolate_word_times
 from podcast_processor.quote_anchor import (
@@ -31,12 +38,12 @@ from podcast_processor.quote_anchor import (
     WordTiming,
     keep_ad,
     parse_quote_ads,
+    quote_ads_json_is_usable,
     resolve_ads,
     word_index_range,
 )
 from podcast_processor.quote_anchor_prompt import (
     confirm_user_prompt,
-    quote_user_prompt,
     system_prompt_for,
 )
 from podcast_processor.quote_lexicon import lexical_cuts_from_matches
@@ -59,9 +66,7 @@ from shared.config import Config, TestWhisperConfig
 logger = logging.getLogger("global_logger")
 
 QUOTE_PROMPT_VERSION = "v2"
-QUOTE_CHUNK_SEGMENTS = DEFAULTS.PROCESSING_NUM_SEGMENTS_TO_INPUT_TO_PROMPT
 SPOT_PAD_S = 50.0
-SPOT_MINUTE_PAD_S = float(DEFAULTS.SPOT_MINUTE_PAD_SECONDS)
 SPOT_WIDE_PAD_S = float(DEFAULTS.SPOT_WIDE_PAD_SECONDS)
 SPOT_BRIDGE_GAP_S = float(DEFAULTS.SPOT_BRIDGE_GAP_SECONDS)
 SPOT_EDGE_SLACK_S = 5.0
@@ -70,65 +75,8 @@ SPOT_MAX_EXTENDS = 1
 CompleteFn = Callable[[str, str], str]
 
 
-def quote_anchor_boundaries_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_quote_anchor_boundaries", False))
-
-
-def spot_then_confirm_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_spot_then_confirm", False))
-
-
-def quote_resume_trim_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_quote_resume_trim", False))
-
-
-def quote_backfill_leadin_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_quote_backfill_leadin", False))
-
-
-def quote_closer_tail_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_quote_closer_tail", False))
-
-
-def spot_weak_drop_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_spot_weak_drop", False))
-
-
-def snap_earlier_start_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_snap_earlier_start", False))
-
-
-def short_min_ad_segment_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_short_min_ad_segment", False))
-
-
-def spot_minute_pad_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_spot_minute_pad", False))
-
-
-def spot_confirm_union_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_spot_confirm_union", False))
-
-
-def spot_wide_pad_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_spot_wide_pad", False))
-
-
-def spot_bridge_windows_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_spot_bridge_windows", False))
-
-
-def quote_prompt_full_break_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_quote_prompt_full_break", False))
-
-
-def spot_opening_isolate_enabled(config: Config) -> bool:
-    return bool(getattr(config, "enable_spot_opening_isolate", False))
-
-
-def prompt_version_for(config: Config) -> str:
-    if quote_prompt_full_break_enabled(config):
-        return "v3"
+def prompt_version_for(_config: Config | None = None) -> str:
+    del _config
     return QUOTE_PROMPT_VERSION
 
 
@@ -245,25 +193,16 @@ def left_extend_adds_transcript(
     return False
 
 
-def effective_spot_pad_s(config: Config, *, override: float | None = None) -> float:
-    pad = SPOT_PAD_S if override is None else float(override)
-    if spot_wide_pad_enabled(config):
-        wide = float(
-            getattr(config, "spot_wide_pad_seconds", SPOT_WIDE_PAD_S) or SPOT_WIDE_PAD_S
-        )
-        return max(pad, wide)
-    if spot_minute_pad_enabled(config):
-        return max(pad, SPOT_MINUTE_PAD_S)
-    return pad
+def effective_spot_pad_s(
+    _config: Config | None = None, *, override: float | None = None
+) -> float:
+    del _config
+    return float(override) if override is not None else SPOT_WIDE_PAD_S
 
 
-def effective_spot_bridge_gap_s(config: Config) -> float:
-    if not spot_bridge_windows_enabled(config):
-        return 0.0
-    return float(
-        getattr(config, "spot_bridge_gap_seconds", SPOT_BRIDGE_GAP_S)
-        or SPOT_BRIDGE_GAP_S
-    )
+def effective_spot_bridge_gap_s(_config: Config | None = None) -> float:
+    del _config
+    return SPOT_BRIDGE_GAP_S
 
 
 def union_confirm_matches(
@@ -315,13 +254,7 @@ def union_confirm_matches(
 
 
 def effective_min_ad_segment_length_seconds(config: Config) -> float:
-    if short_min_ad_segment_enabled(config):
-        return float(DEFAULTS.OUTPUT_SHORT_MIN_AD_SEGMENT_LENGTH_SECONDS)
     return float(config.output.min_ad_segment_length_seconds)
-
-
-def quote_anchor_path_enabled(config: Config) -> bool:
-    return quote_anchor_boundaries_enabled(config) or spot_then_confirm_enabled(config)
 
 
 def interpolate_words_from_segments(
@@ -368,7 +301,7 @@ class QuoteAnchorClassifier:
         ngram_phrases: tuple[str, ...] = (),
         extra_phrases: tuple[str, ...] = (),
         extra_names: tuple[str, ...] = (),
-        spot_pad_s: float = SPOT_PAD_S,
+        spot_pad_s: float | None = None,
     ) -> None:
         self.config = config
         self.logger = logger or logging.getLogger("global_logger")
@@ -424,93 +357,14 @@ class QuoteAnchorClassifier:
         spans = segments_to_spans(transcript_segments)
         gaps = self._silence_gaps(post)
         loaded = reanchor_words_to_speech(loaded, spans, gaps)
-        if spot_then_confirm_enabled(self.config):
-            return self._classify_spot_then_confirm(
-                transcript_segments=transcript_segments,
-                post=post,
-                loaded=loaded,
-                spans=spans,
-                gaps=gaps,
-                started=started,
-            )
-        matches: list[QuoteMatch] = []
-        idx = 0
-        while idx < len(transcript_segments):
-            chunk = transcript_segments[idx : idx + QUOTE_CHUNK_SEGMENTS]
-            chunk_spans = spans[idx : idx + QUOTE_CHUNK_SEGMENTS]
-            chunk_start = chunk_spans[0].start
-            chunk_end = chunk_spans[-1].end
-            user = quote_user_prompt(
-                title=str(post.title or ""),
-                start_seconds=chunk_start,
-                texts=[seg.text or "" for seg in chunk],
-                prompt_version=prompt_version_for(self.config),
-            )
-            raw, model_call = self._complete_chunk(
-                post=post,
-                chunk=chunk,
-                user=user,
-            )
-            ads = [
-                ad
-                for ad in parse_quote_ads(raw)
-                if keep_ad(ad, float(self.config.output.min_confidence))
-            ]
-            w0, w1 = sent_window_word_range(
-                loaded, sent_start=chunk_start, sent_end=chunk_end
-            )
-            prior_end = max((item.end for item in matches), default=None)
-            chunk_matches = resolve_ads(
-                ads,
-                loaded,
-                spans,
-                chunk_start=chunk_start,
-                chunk_end=chunk_end,
-                word_from=w0,
-                word_to=w1,
-                stop_before=prior_end,
-                time_start=chunk_start,
-                time_end=chunk_end,
-            )
-            if any(item.dropped for item in chunk_matches):
-                raise RuntimeError("quote-anchor dropped an ad; fail-closed violated")
-            if model_call is not None:
-                self._write_identifications(chunk, chunk_matches, model_call)
-            matches.extend(chunk_matches)
-            idx += len(chunk)
-
-        cuts = lexical_cuts_from_matches(
-            matches,
-            loaded,
-            gaps,
-            pull_dai_bed=self.pull_dai_bed,
+        return self._classify_spot_then_confirm(
+            transcript_segments=transcript_segments,
+            post=post,
+            loaded=loaded,
+            spans=spans,
+            gaps=gaps,
+            started=started,
         )
-        # Fail-closed: a match that lexical collapsed still keeps its raw span.
-        if len(cuts) < len(matches):
-            used = {(round(a, 3), round(b, 3)) for a, b in cuts}
-            for item in matches:
-                key = (round(item.start, 3), round(item.end, 3))
-                if item.end > item.start and key not in used:
-                    cuts.append((item.start, item.end))
-                    self.logger.warning(
-                        "lexical dropped a quote span; restoring %.1f-%.1f",
-                        item.start,
-                        item.end,
-                    )
-        self.last_matches = matches
-        self.last_cuts = cuts
-        self._persist_cuts(post, cuts, matches)
-        self.last_classify_s = time.time() - started
-        self.logger.info(
-            "quote-anchor classified post %s quotes=%s word=%s seg_fb=%s chunk_fb=%s cuts=%s",
-            post.id,
-            len(matches),
-            sum(1 for item in matches if item.method == "word"),
-            sum(1 for item in matches if item.method == "segment_fallback"),
-            sum(1 for item in matches if item.method == "chunk_fallback"),
-            len(cuts),
-        )
-        return cuts
 
     def _classify_spot_then_confirm(
         self,
@@ -532,33 +386,19 @@ class QuoteAnchorClassifier:
             extra_phrases=extra_phrases,
             extra_names=extra_names,
             ngram_phrases=self.ngram_phrases,
-            drop_weak=spot_weak_drop_enabled(self.config),
+            drop_weak=True,
         )
         self.last_candidates = candidates
         ep_end = float(transcript_segments[-1].end_time or 0.0)
         matches: list[QuoteMatch] = []
-        pad = effective_spot_pad_s(self.config, override=self.spot_pad_s)
-        isolate_opening = spot_opening_isolate_enabled(self.config)
-        bridge_gap = effective_spot_bridge_gap_s(self.config)
-        if bridge_gap > 0.0:
-            windows = merge_spot_confirm_windows(
-                candidates,
-                pad_s=pad,
-                ep_end=ep_end,
-                max_gap_s=bridge_gap,
-                isolate_opening=isolate_opening,
-            )
-        else:
-            windows = []
-            for i, cand in enumerate(candidates):
-                used_pad = SPOT_PAD_S if isolate_opening and i == 0 else pad
-                windows.append(
-                    (
-                        max(0.0, cand.start - used_pad),
-                        min(ep_end, cand.end + used_pad),
-                        (cand,),
-                    )
-                )
+        pad = effective_spot_pad_s(override=self.spot_pad_s)
+        windows = merge_spot_confirm_windows(
+            candidates,
+            pad_s=pad,
+            ep_end=ep_end,
+            max_gap_s=effective_spot_bridge_gap_s(),
+            isolate_opening=True,
+        )
         for win_start, win_end, group in windows:
             cand = grouped_candidate(group)
             prior_end = max((item.end for item in matches), default=None)
@@ -674,10 +514,9 @@ class QuoteAnchorClassifier:
             if model_call is not None:
                 self._write_identifications(chunk, matches, model_call)
             if matches:
-                if spot_confirm_union_enabled(self.config) and last_good:
-                    last_good = union_confirm_matches(last_good, matches)
-                else:
-                    last_good = matches
+                last_good = (
+                    union_confirm_matches(last_good, matches) if last_good else matches
+                )
             if not matches or extends >= SPOT_MAX_EXTENDS:
                 break
             grew = False
@@ -784,7 +623,11 @@ class QuoteAnchorClassifier:
         )
         self.last_llm_calls += 1
         if self.complete_fn is not None:
-            content = self.complete_fn(system_prompt, user)
+            try:
+                content = self.complete_fn(system_prompt, user)
+            except Exception as exc:  # noqa: BLE001
+                self._fail_incomplete(model_call, exc)
+            self._require_usable_quote_json(model_call, content)
             self._mark_model_call(model_call, content, status="success")
             return content, model_call
         cached = self._read_llm_cache(system_prompt, user)
@@ -800,12 +643,56 @@ class QuoteAnchorClassifier:
             content = '{"ads":[]}'
             self._mark_model_call(model_call, content, status="success")
             return content, model_call
-        content, pin, pout = self._call_llm(system_prompt, user)
+        try:
+            content, pin, pout = self._call_llm(system_prompt, user)
+        except Exception as exc:  # noqa: BLE001
+            self._fail_incomplete(model_call, exc)
         self.last_input_tokens += pin
         self.last_output_tokens += pout
         self._write_llm_cache(system_prompt, user, content, pin, pout)
         self._mark_model_call(model_call, content, status="success")
         return content, model_call
+
+    def _content_filter_error(self, error: Exception) -> bool:
+        return isinstance(error, RuntimeError) and "content_filter" in str(error)
+
+    def _fail_incomplete(
+        self, model_call: ModelCall | None, error: Exception
+    ) -> NoReturn:
+        message = str(error)
+        self._mark_model_call(
+            model_call,
+            "",
+            status="failed_permanent",
+            error_message=message,
+        )
+        raise ClassificationIncompleteError(
+            f"Ad classification incomplete for quote-anchor window: {message}"
+        ) from error
+
+    def _require_usable_quote_json(
+        self, model_call: ModelCall | None, content: str
+    ) -> None:
+        if quote_ads_json_is_usable(content):
+            return
+        self._fail_incomplete(
+            model_call,
+            InvalidModelOutputError("LLM response is not valid quote-ad JSON"),
+        )
+
+    def _usable_llm_content(self, *, finish_reason: Any, content: str | None) -> str:
+        if finish_reason == "length":
+            raise InvalidModelOutputError(
+                "LLM response truncated at the output token limit "
+                "(finish_reason=length)"
+            )
+        if finish_reason == "content_filter":
+            raise RuntimeError("LLM response withheld (finish_reason=content_filter)")
+        if content is None or not str(content).strip():
+            raise InvalidModelOutputError("LLM response has no content")
+        if not quote_ads_json_is_usable(content):
+            raise InvalidModelOutputError("LLM response is not valid quote-ad JSON")
+        return content
 
     def _call_llm(self, system_prompt: str, user: str) -> tuple[str, int, int]:
         last_error: Exception | None = None
@@ -824,7 +711,11 @@ class QuoteAnchorClassifier:
                     reasoning_effort="low",
                     api_key=self.config.llm_api_key,
                 )
-                content = response.choices[0].message.content or '{"ads":[]}'
+                choice = response.choices[0]
+                content = self._usable_llm_content(
+                    finish_reason=getattr(choice, "finish_reason", None),
+                    content=getattr(choice.message, "content", None),
+                )
                 usage = getattr(response, "usage", None)
                 pin = int(getattr(usage, "prompt_tokens", 0) or 0)
                 pout = int(getattr(usage, "completion_tokens", 0) or 0)
@@ -832,7 +723,7 @@ class QuoteAnchorClassifier:
             except Exception as exc:
                 last_error = exc
                 text = str(exc).lower()
-                retryable = (
+                retryable = isinstance(exc, InvalidModelOutputError) or (
                     "503" in text
                     or "unavailable" in text
                     or "429" in text
@@ -843,6 +734,8 @@ class QuoteAnchorClassifier:
                     or "connecterror" in text
                     or "connect" in text
                 )
+                if self._content_filter_error(exc):
+                    retryable = False
                 if not retryable or attempt >= retries - 1:
                     raise
                 delay = min(32.0, 4.0 * (2**attempt))
@@ -942,6 +835,7 @@ class QuoteAnchorClassifier:
         content: str,
         *,
         status: str,
+        error_message: str | None = None,
     ) -> None:
         if model_call is None or model_call.id is None:
             return
@@ -951,13 +845,14 @@ class QuoteAnchorClassifier:
             {
                 "response": content,
                 "status": status,
-                "error_message": None,
+                "error_message": error_message,
                 "retry_attempts": 1,
             },
             wait=True,
         )
         model_call.response = content
         model_call.status = status
+        model_call.error_message = error_message
 
     def _write_identifications(
         self,

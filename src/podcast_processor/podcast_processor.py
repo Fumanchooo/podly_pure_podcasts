@@ -39,16 +39,7 @@ from podcast_processor.chapter_writer import (
 )
 from podcast_processor.podcast_downloader import PodcastDownloader, sanitize_title
 from podcast_processor.processing_status_manager import ProcessingStatusManager
-from podcast_processor.prompt import (
-    DEFAULT_SYSTEM_PROMPT_PATH,
-    DEFAULT_USER_PROMPT_TEMPLATE_PATH,
-)
-from podcast_processor.quote_anchor_classifier import (  # noqa: F401
-    QuoteAnchorClassifier,
-    quote_anchor_boundaries_enabled,
-    quote_anchor_path_enabled,
-    spot_then_confirm_enabled,
-)
+from podcast_processor.quote_anchor_classifier import QuoteAnchorClassifier
 from podcast_processor.transcription_manager import TranscriptionManager
 from shared.config import Config
 from shared.processing_paths import (
@@ -65,15 +56,6 @@ logger = logging.getLogger("global_logger")
 PROCESSING_FAILED_CLIP_PATH = (
     Path(__file__).resolve().parent / "assets" / "processing_failed.mp3"
 )
-
-
-def bow_scout_gemini_confirm_enabled(config: Config) -> bool:
-    """Return whether the experimental scout+confirm classifier is requested.
-
-    Default is False. Even when True, `_classify_ad_segments` currently keeps
-    the production AdClassifier walk (the experiment is eval-only until wired).
-    """
-    return bool(getattr(config, "enable_bow_scout_gemini_confirm", False))
 
 
 def get_post_processed_audio_path(post: Post) -> ProcessingPaths | None:
@@ -1035,34 +1017,11 @@ class PodcastProcessor:
         self.status_manager.update_job_status(
             job, "running", 3, "Identifying ads", 75.0
         )
-        if quote_anchor_path_enabled(self.config):
-            if spot_then_confirm_enabled(self.config):
-                self.logger.info(
-                    "enable_spot_then_confirm is on; $0 spotter + per-break LLM"
-                )
-            else:
-                self.logger.info(
-                    "enable_quote_anchor_boundaries is on; using prompt_v2 + lexical_v2"
-                )
-            self.quote_anchor_classifier.classify(
-                transcript_segments=transcript_segments,
-                post=post,
-            )
-            return
-        if bow_scout_gemini_confirm_enabled(self.config):
-            self.logger.warning(
-                "enable_bow_scout_gemini_confirm is on, but the scout+confirm "
-                "path is eval-only and does not write Identification rows. "
-                "Falling back to the production AdClassifier LLM walk."
-            )
-        user_prompt_template = self.get_user_prompt_template(
-            DEFAULT_USER_PROMPT_TEMPLATE_PATH
+        self.logger.info(
+            "spot-then-confirm: bag-of-words windows + per-break LLM quotes"
         )
-        system_prompt = self.get_system_prompt(DEFAULT_SYSTEM_PROMPT_PATH)
-        self.ad_classifier.classify(
+        self.quote_anchor_classifier.classify(
             transcript_segments=transcript_segments,
-            system_prompt=system_prompt,
-            user_prompt_template=user_prompt_template,
             post=post,
         )
 

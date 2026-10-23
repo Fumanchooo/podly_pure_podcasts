@@ -1,4 +1,4 @@
-"""Quote-anchor production path: flag, cutter, fail-closed classify."""
+"""Quote-anchor production path: spot-then-confirm cutter, fail-closed classify."""
 
 from __future__ import annotations
 
@@ -11,12 +11,7 @@ from flask import Flask
 from app.extensions import db
 from app.models import Feed, Identification, ModelCall, Post, TranscriptSegment
 from podcast_processor.audio_processor import AudioProcessor
-from podcast_processor.podcast_processor import (
-    PodcastProcessor,
-    quote_anchor_boundaries_enabled,
-    quote_anchor_path_enabled,
-    spot_then_confirm_enabled,
-)
+from podcast_processor.podcast_processor import PodcastProcessor
 from podcast_processor.quote_anchor import (
     QUOTE_ANCHOR_SOURCE,
     WordTiming,
@@ -24,7 +19,6 @@ from podcast_processor.quote_anchor import (
     parse_quote_ads,
 )
 from podcast_processor.quote_anchor_classifier import QuoteAnchorClassifier
-from shared import defaults as DEFAULTS
 from shared.config import Config
 from shared.config import TestWhisperConfig as WhisperTestConfig
 from shared.local_writer import force_local_writer
@@ -38,12 +32,7 @@ def _local_writer() -> None:
 
 def _quote_config() -> Config:
     config = create_standard_test_config()
-    return config.model_copy(
-        update={
-            "enable_quote_anchor_boundaries": True,
-            "whisper": WhisperTestConfig(),
-        }
-    )
+    return config.model_copy(update={"whisper": WhisperTestConfig()})
 
 
 def _seed_post(title: str = "Darknet") -> tuple[Post, list[TranscriptSegment]]:
@@ -87,42 +76,12 @@ def _seed_post(title: str = "Darknet") -> tuple[Post, list[TranscriptSegment]]:
     return post, segments
 
 
-def test_quote_anchor_flag_defaults_off() -> None:
-    assert DEFAULTS.ENABLE_QUOTE_ANCHOR_BOUNDARIES is False
-    assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
-    assert DEFAULTS.ENABLE_QUOTE_RESUME_TRIM is False
-    assert DEFAULTS.ENABLE_QUOTE_BACKFILL_LEADIN is False
-    assert DEFAULTS.ENABLE_QUOTE_CLOSER_TAIL is False
-    assert DEFAULTS.ENABLE_SPOT_WEAK_DROP is False
-    assert DEFAULTS.ENABLE_SNAP_EARLIER_START is False
-    assert DEFAULTS.ENABLE_SHORT_MIN_AD_SEGMENT is False
-    assert DEFAULTS.ENABLE_SPOT_MINUTE_PAD is False
-    assert DEFAULTS.ENABLE_SPOT_CONFIRM_UNION is False
-    assert DEFAULTS.ENABLE_SPOT_WIDE_PAD is False
-    assert DEFAULTS.ENABLE_SPOT_BRIDGE_WINDOWS is False
-    assert DEFAULTS.ENABLE_SPOT_OPENING_ISOLATE is False
-    assert DEFAULTS.ENABLE_QUOTE_PROMPT_FULL_BREAK is False
-    config = create_standard_test_config()
-    assert config.enable_quote_anchor_boundaries is False
-    assert config.enable_spot_then_confirm is False
-    assert quote_anchor_boundaries_enabled(config) is False
-    assert spot_then_confirm_enabled(config) is False
-    assert quote_anchor_path_enabled(config) is False
-
-
-def test_quote_anchor_flag_can_be_enabled() -> None:
-    enabled = create_standard_test_config().model_copy(
-        update={"enable_quote_anchor_boundaries": True}
-    )
-    assert quote_anchor_boundaries_enabled(enabled) is True
-    assert create_standard_test_config().enable_quote_anchor_boundaries is False
-
-
-def test_classify_uses_quote_anchor_when_flag_on() -> None:
+def test_classify_always_uses_quote_anchor() -> None:
     source = inspect.getsource(PodcastProcessor._classify_ad_segments)
-    assert "quote_anchor_path_enabled" in source
     assert "self.quote_anchor_classifier.classify" in source
-    assert "self.ad_classifier.classify" in source
+    assert "self.ad_classifier.classify" not in source
+    assert "enable_spot_then_confirm" not in source
+    assert "quote_anchor_path_enabled" not in source
 
 
 def test_parse_quote_ads_and_keep() -> None:
@@ -141,7 +100,7 @@ def test_parse_quote_ads_and_keep() -> None:
     assert keep_ad(tech[0], 0.8) is False
 
 
-def test_get_ad_segments_uses_quote_cuts_when_flag_on(app: Flask) -> None:
+def test_get_ad_segments_uses_quote_cuts(app: Flask) -> None:
     with app.app_context():
         post, _segments = _seed_post()
         post.refined_ad_boundaries = [
@@ -168,7 +127,7 @@ def test_get_ad_segments_uses_quote_cuts_when_flag_on(app: Flask) -> None:
         assert cuts == [(1.5, 8.2)]
 
 
-def test_get_ad_segments_ignores_quote_payload_when_flag_off(app: Flask) -> None:
+def test_get_ad_segments_prefers_quote_cuts_over_identifications(app: Flask) -> None:
     with app.app_context():
         post, segments = _seed_post()
         post.refined_ad_boundaries = [
@@ -204,7 +163,7 @@ def test_get_ad_segments_ignores_quote_payload_when_flag_off(app: Flask) -> None
             config=create_standard_test_config(), db_session=db.session
         )
         cuts = processor.get_ad_segments(post)
-        assert cuts == [(2.0, 8.0)]
+        assert cuts == [(1.5, 8.2)]
 
 
 def test_classifier_fail_closed_segment_fallback_never_drops(app: Flask) -> None:
@@ -290,7 +249,7 @@ def test_classifier_empty_ads_stores_quote_header(app: Flask) -> None:
             db_session=db.session,
             complete_fn=complete,
         )
-        cuts = classifier.classify(transcript_segments=segments, post=post, words=[])
+        cuts = classifier.classify(transcript_segments=segments, post=post)
         assert cuts == []
         processor = AudioProcessor(config=_quote_config(), db_session=db.session)
         assert processor.get_ad_segments(post) == []
@@ -298,3 +257,59 @@ def test_classifier_empty_ads_stores_quote_header(app: Flask) -> None:
         assert isinstance(payload, list)
         assert payload[0]["source"] == QUOTE_ANCHOR_SOURCE
         assert payload[0]["empty"] is True
+
+
+def test_classifier_truncated_json_is_incomplete(app: Flask) -> None:
+    from podcast_processor.ad_classifier import ClassificationIncompleteError
+
+    with app.app_context():
+        post, segments = _seed_post()
+
+        def complete(_system: str, _user: str) -> str:
+            return '{"ads": [{"start_quote": "support for the show"'
+
+        classifier = QuoteAnchorClassifier(
+            config=_quote_config(),
+            db_session=db.session,
+            complete_fn=complete,
+        )
+        with pytest.raises(ClassificationIncompleteError, match="quote-ad JSON"):
+            classifier.classify(transcript_segments=segments, post=post)
+
+
+def test_classifier_content_filter_is_incomplete(app: Flask) -> None:
+    from podcast_processor.ad_classifier import ClassificationIncompleteError
+
+    with app.app_context():
+        post, segments = _seed_post()
+
+        def complete(_system: str, _user: str) -> str:
+            raise RuntimeError("LLM response withheld (finish_reason=content_filter)")
+
+        classifier = QuoteAnchorClassifier(
+            config=_quote_config(),
+            db_session=db.session,
+            complete_fn=complete,
+        )
+        with pytest.raises(ClassificationIncompleteError, match="content_filter"):
+            classifier.classify(transcript_segments=segments, post=post)
+
+
+def test_cached_truncated_json_replays_leniently(app: Flask) -> None:
+    """Eval cache hits must not fail-publish; live LLM output stays strict."""
+    with app.app_context():
+        post, segments = _seed_post()
+        classifier = QuoteAnchorClassifier(
+            config=_quote_config(),
+            db_session=db.session,
+        )
+        classifier._read_llm_cache = (  # type: ignore[method-assign]
+            lambda _system, _user: {
+                "content": '{"ads": [{"start_quote": "partial',
+                "input_tokens": 1,
+                "output_tokens": 1,
+            }
+        )
+        cuts = classifier.classify(transcript_segments=segments, post=post)
+        assert cuts == []
+        assert classifier.last_llm_calls >= 1

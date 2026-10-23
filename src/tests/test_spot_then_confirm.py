@@ -1,4 +1,4 @@
-"""Spot-then-confirm: one LLM call per candidate, edge extend, flag default off."""
+"""Spot-then-confirm: one LLM call per spotted window, edge extend."""
 
 from __future__ import annotations
 
@@ -9,11 +9,7 @@ from flask import Flask
 from app.extensions import db
 from app.models import Feed, Post, TranscriptSegment
 from podcast_processor.quote_anchor import WordTiming
-from podcast_processor.quote_anchor_classifier import (
-    QuoteAnchorClassifier,
-    spot_then_confirm_enabled,
-)
-from shared import defaults as DEFAULTS
+from podcast_processor.quote_anchor_classifier import QuoteAnchorClassifier
 from shared.config import TestWhisperConfig as WhisperTestConfig
 from shared.local_writer import force_local_writer
 from shared.test_utils import create_standard_test_config
@@ -21,13 +17,7 @@ from shared.test_utils import create_standard_test_config
 
 def _spot_config(*, pad: float = 50.0):
     config = create_standard_test_config()
-    return config.model_copy(
-        update={
-            "enable_spot_then_confirm": True,
-            "enable_quote_anchor_boundaries": True,
-            "whisper": WhisperTestConfig(),
-        }
-    ), pad
+    return config.model_copy(update={"whisper": WhisperTestConfig()}), pad
 
 
 def _seed(
@@ -72,12 +62,6 @@ def _words_from_rows(rows: list[tuple[float, float, str]]) -> list[WordTiming]:
             words.append(WordTiming(word=part, start=t, end=min(end, t + dt)))
             t += dt
     return words
-
-
-def test_spot_then_confirm_default_off() -> None:
-    assert DEFAULTS.ENABLE_SPOT_THEN_CONFIRM is False
-    config = create_standard_test_config()
-    assert spot_then_confirm_enabled(config) is False
 
 
 def test_one_llm_call_per_candidate_not_whole_episode(app: Flask) -> None:
@@ -166,6 +150,11 @@ def test_padding_edge_extends_once(app: Flask) -> None:
         rows = [
             (
                 0.0,
+                10.0,
+                "Brought to you by Honey. Visit joinhoney.com slash pod for the app.",
+            ),
+            (
+                10.0,
                 80.0,
                 "The hosts talk about the news of the day in great detail here for a long while.",
             ),
@@ -190,6 +179,19 @@ def test_padding_edge_extends_once(app: Flask) -> None:
         calls = {"n": 0}
 
         def complete(_system: str, user: str) -> str:
+            if "joinhoney.com" in user:
+                return json.dumps(
+                    {
+                        "ads": [
+                            {
+                                "start_quote": "Brought to you by Honey",
+                                "end_quote": "joinhoney.com slash pod for the app",
+                                "content_type": "promotional_external",
+                                "confidence": 0.95,
+                            }
+                        ]
+                    }
+                )
             calls["n"] += 1
             if calls["n"] == 1:
                 # Quote the padding edge so the matcher sits on the window start.
@@ -234,87 +236,17 @@ def test_padding_edge_extends_once(app: Flask) -> None:
         assert classifier.last_llm_calls >= 2
 
 
-def test_extend_wipes_first_confirm_without_union_flag(app: Flask) -> None:
-    force_local_writer()
-    with app.app_context():
-        rows = [
-            (
-                0.0,
-                80.0,
-                "The hosts talk about the news of the day in great detail here for a long while.",
-            ),
-            (
-                80.0,
-                90.0,
-                "Ordinary conversation continues without any sponsor mention at all.",
-            ),
-            (90.0, 100.0, "Alpha bravo charlie delta echo foxtrot continue the story."),
-            (
-                100.0,
-                110.0,
-                "This episode is sponsored by NetSuite. Visit netsuite.com slash demo.",
-            ),
-            (
-                110.0,
-                120.0,
-                "Back to the interview with more of the conversation today.",
-            ),
-        ]
-        post, segments = _seed("Wipe", rows)
-        calls = {"n": 0}
-
-        def complete(_system: str, user: str) -> str:
-            calls["n"] += 1
-            if calls["n"] == 1:
-                return json.dumps(
-                    {
-                        "ads": [
-                            {
-                                "start_quote": "Alpha bravo charlie delta echo",
-                                "end_quote": "Visit netsuite.com slash demo",
-                                "content_type": "promotional_external",
-                                "confidence": 0.95,
-                            }
-                        ]
-                    }
-                )
-            return json.dumps(
-                {
-                    "ads": [
-                        {
-                            "start_quote": "This episode is sponsored by NetSuite",
-                            "end_quote": "Visit netsuite.com slash demo",
-                            "content_type": "promotional_external",
-                            "confidence": 0.95,
-                        }
-                    ]
-                }
-            )
-
-        config, pad = _spot_config(pad=9.0)
-        classifier = QuoteAnchorClassifier(
-            config=config,
-            db_session=db.session,
-            complete_fn=complete,
-            spot_pad_s=pad,
-        )
-        classifier.classify(
-            transcript_segments=segments,
-            post=post,
-            words=_words_from_rows(rows),
-        )
-        assert classifier.last_extends == 1
-        assert len(classifier.last_matches) == 1
-        # Wipe: only the second, shorter confirm survives.
-        assert classifier.last_matches[0].start >= 99.0
-
-
 def test_extend_union_keeps_first_confirm(app: Flask) -> None:
     force_local_writer()
     with app.app_context():
         rows = [
             (
                 0.0,
+                10.0,
+                "Brought to you by Honey. Visit joinhoney.com slash pod for the app.",
+            ),
+            (
+                10.0,
                 80.0,
                 "The hosts talk about the news of the day in great detail here for a long while.",
             ),
@@ -339,6 +271,19 @@ def test_extend_union_keeps_first_confirm(app: Flask) -> None:
         calls = {"n": 0}
 
         def complete(_system: str, user: str) -> str:
+            if "joinhoney.com" in user:
+                return json.dumps(
+                    {
+                        "ads": [
+                            {
+                                "start_quote": "Brought to you by Honey",
+                                "end_quote": "joinhoney.com slash pod for the app",
+                                "content_type": "promotional_external",
+                                "confidence": 0.95,
+                            }
+                        ]
+                    }
+                )
             calls["n"] += 1
             if calls["n"] == 1:
                 return json.dumps(
@@ -367,7 +312,6 @@ def test_extend_union_keeps_first_confirm(app: Flask) -> None:
             )
 
         config, pad = _spot_config(pad=9.0)
-        config = config.model_copy(update={"enable_spot_confirm_union": True})
         classifier = QuoteAnchorClassifier(
             config=config,
             db_session=db.session,
@@ -381,11 +325,14 @@ def test_extend_union_keeps_first_confirm(app: Flask) -> None:
         )
         assert classifier.last_extends == 1
         assert classifier.last_matches
+        midroll = [item for item in classifier.last_matches if item.start > 50.0]
+        assert midroll
         # Union: first confirm's earlier start survives the second reply.
-        assert min(item.start for item in classifier.last_matches) < 99.0
+        assert min(item.start for item in midroll) < 99.0
 
 
-def test_minute_pad_flag_widens_confirm_window(app: Flask) -> None:
+def test_opening_isolate_keeps_lone_cluster_on_50s_pad(app: Flask) -> None:
+    """A single midroll cluster uses the 50s opening pad, not 70s."""
     force_local_writer()
     with app.app_context():
         rows = [
@@ -421,12 +368,12 @@ def test_minute_pad_flag_widens_confirm_window(app: Flask) -> None:
                 }
             )
 
-        off, _ = _spot_config(pad=50.0)
+        config, _ = _spot_config()
         QuoteAnchorClassifier(
-            config=off,
+            config=config,
             db_session=db.session,
             complete_fn=complete,
-            spot_pad_s=50.0,
+            spot_pad_s=70.0,
         ).classify(
             transcript_segments=segments,
             post=post,
@@ -434,21 +381,7 @@ def test_minute_pad_flag_widens_confirm_window(app: Flask) -> None:
         )
         assert prompts
         assert "UNIQUEOPENINGTOKEN" not in prompts[0]
-
-        prompts.clear()
-        on = off.model_copy(update={"enable_spot_minute_pad": True})
-        QuoteAnchorClassifier(
-            config=on,
-            db_session=db.session,
-            complete_fn=complete,
-            spot_pad_s=50.0,
-        ).classify(
-            transcript_segments=segments,
-            post=post,
-            words=_words_from_rows(rows),
-        )
-        assert prompts
-        assert "UNIQUEOPENINGTOKEN" in prompts[0]
+        assert "sponsored by NetSuite" in prompts[0]
 
 
 def _cadillac_rows() -> list[tuple[float, float, str]]:
@@ -572,6 +505,11 @@ def test_prompt_word_bounds_still_extends_when_left_transcript_exists(
         rows = [
             (
                 0.0,
+                10.0,
+                "Brought to you by Honey. Visit joinhoney.com slash pod for the app.",
+            ),
+            (
+                10.0,
                 80.0,
                 "The hosts talk about the news of the day in great detail here for a long while.",
             ),
@@ -596,6 +534,19 @@ def test_prompt_word_bounds_still_extends_when_left_transcript_exists(
         calls = {"n": 0}
 
         def complete(_system: str, user: str) -> str:
+            if "joinhoney.com" in user:
+                return json.dumps(
+                    {
+                        "ads": [
+                            {
+                                "start_quote": "Brought to you by Honey",
+                                "end_quote": "joinhoney.com slash pod for the app",
+                                "content_type": "promotional_external",
+                                "confidence": 0.95,
+                            }
+                        ]
+                    }
+                )
             calls["n"] += 1
             if calls["n"] == 1:
                 return json.dumps(
